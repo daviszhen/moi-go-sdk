@@ -410,8 +410,9 @@ func (c *RawClient) UploadConnectorFile(ctx context.Context, req *UploadFileRequ
 	if req.VolumeID == "" {
 		return nil, fmt.Errorf("volume_id is required")
 	}
-	if len(req.Files) == 0 {
-		return nil, fmt.Errorf("at least one file is required")
+	// Allow empty Files if TableConfig.ConnFileIDs is provided (files already uploaded)
+	if len(req.Files) == 0 && (req.TableConfig == nil || len(req.TableConfig.ConnFileIDs) == 0) {
+		return nil, fmt.Errorf("at least one file is required, or TableConfig.ConnFileIDs must be provided")
 	}
 
 	// Create multipart form data
@@ -509,7 +510,7 @@ func (c *RawClient) UploadConnectorFile(ctx context.Context, req *UploadFileRequ
 		}
 	}
 
-	// Add files (required)
+	// Add files (required, unless TableConfig.ConnFileIDs is provided)
 	for _, item := range req.Files {
 		fileField, err := writer.CreateFormFile("file", item.FileName)
 		if err != nil {
