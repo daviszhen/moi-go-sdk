@@ -265,6 +265,76 @@ func (c *SDKClient) ImportLocalFileToNewTable(ctx context.Context, tableConfig *
 		},
 	}
 
+	// Ensure new_table is set to true for this function (importing to a new table)
+	tableConfig.NewTable = true
+
+	// Build UploadFileRequest
+	// Note: Files is set to empty slice as the file is already uploaded and referenced by conn_file_id
+	// The backend should use the conn_file_id from tableConfig.ConnFileIDs
+	uploadReq := &UploadFileRequest{
+		VolumeID:    volumeID,
+		Files:       []FileUploadItem{}, // Empty, as file is already uploaded
+		Meta:        meta,
+		TableConfig: tableConfig,
+	}
+
+	// Call the raw client's UploadConnectorFile method
+	return c.raw.UploadConnectorFile(ctx, uploadReq)
+}
+
+// ImportLocalFileToExistedTable imports a local file (already uploaded via UploadLocalFile) to an existing table.
+// This is a high-level convenience method that simplifies the process of importing a file to an existing table.
+//
+// Parameters:
+//   - tableConfig: the table configuration built from FilePreview results (required)
+//     The tableConfig must have:
+//   - ConnFileIDs: at least one file ID from UploadLocalFile
+//   - TableID: the target table ID (required)
+//   - ExistedTable: the mapping between file columns and table columns (optional, but recommended)
+//
+// Returns:
+//   - *UploadFileResponse: the response from the upload operation
+//   - error: any error that occurred
+//
+// Note: This method uses magic values for VolumeID ("123456") and constructs Meta from the first conn_file_id.
+// The Files field in UploadFileRequest is set to empty, as the file is already uploaded and referenced by conn_file_id.
+func (c *SDKClient) ImportLocalFileToExistedTable(ctx context.Context, tableConfig *TableConfig) (*UploadFileResponse, error) {
+	if tableConfig == nil {
+		return nil, fmt.Errorf("table_config is required")
+	}
+	if len(tableConfig.ConnFileIDs) == 0 {
+		return nil, fmt.Errorf("table_config.conn_file_ids is required and must contain at least one file ID")
+	}
+	if tableConfig.TableID == 0 {
+		return nil, fmt.Errorf("table_config.table_id is required when importing to an existing table")
+	}
+
+	// Get the first conn_file_id for metadata
+	connFileID := tableConfig.ConnFileIDs[0]
+
+	// Use magic value for VolumeID as per requirements
+	volumeID := VolumeID("123456")
+
+	// Use connFileID as filename and default path
+	filename := connFileID
+	path := "/"
+
+	// Build Meta using magic value format: [{"filename":"<filename>","path":"<path>"}]
+	meta := []FileMeta{
+		{
+			Filename: filename,
+			Path:     path,
+		},
+	}
+
+	// Ensure new_table is set to false for this function (importing to an existing table)
+	tableConfig.NewTable = false
+
+	// Ensure existed_table is initialized (even if empty, to avoid nil)
+	if tableConfig.ExistedTable == nil {
+		tableConfig.ExistedTable = []FileAndTableColumnMapping{}
+	}
+
 	// Build UploadFileRequest
 	// Note: Files is set to empty slice as the file is already uploaded and referenced by conn_file_id
 	// The backend should use the conn_file_id from tableConfig.ConnFileIDs

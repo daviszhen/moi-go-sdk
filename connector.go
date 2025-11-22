@@ -69,6 +69,17 @@ const (
 	ConflictPolicyReplace ConflictPolicy = 2
 )
 
+// FileAndTableColumnMapping represents the mapping between file columns and table columns.
+// Used when importing to an existing table.
+type FileAndTableColumnMapping struct {
+	// TableColumn is the table column name
+	TableColumn string `json:"tableColumn"`
+	// Column is the file column name or default value or NULL
+	Column string `json:"column"`
+	// ColNumInFile is the column number in the file (1-based)
+	ColNumInFile int32 `json:"col_num_in_file"`
+}
+
 // TableConfig represents table configuration for file upload.
 type TableConfig struct {
 	CreateTable   *CreateTableConfig `json:"create_table"`
@@ -83,6 +94,13 @@ type TableConfig struct {
 	ConnFileIDs []string       `json:"conn_file_ids"`
 	NewTable    bool           `json:"new_table"`
 	DatabaseID  DatabaseID     `json:"database_id"`
+	// TableID is the target table ID.
+	// Required when using an existing table (new_table = false).
+	// Will be filled after table creation when creating a new table (new_table = true).
+	TableID TableID `json:"table_id,omitempty"`
+	// ExistedTable is the mapping between file columns and table columns.
+	// Used when importing to an existing table (new_table = false).
+	ExistedTable []FileAndTableColumnMapping `json:"existed_table,omitempty"`
 }
 
 // CreateTableConfig represents the table creation configuration.
