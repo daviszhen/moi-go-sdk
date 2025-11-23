@@ -116,7 +116,12 @@ func (c *RawClient) doJSON(ctx context.Context, method, path string, body interf
 	defer resp.Body.Close()
 
 	var envelope apiEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&envelope); err != nil {
+		// Check if response body is empty
+		if err == io.EOF {
+			return fmt.Errorf("empty response body")
+		}
 		return fmt.Errorf("decode response: %w", err)
 	}
 

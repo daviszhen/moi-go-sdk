@@ -2,17 +2,11 @@ package sdk
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
-
-func randomUserName() string {
-	return fmt.Sprintf("sdkuser%d", time.Now().UnixNano())
-}
 
 func TestUserLiveFlow(t *testing.T) {
 	ctx := context.Background()
