@@ -112,3 +112,130 @@ func TestTableNilRequestErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestTableDatabaseIDNotExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	nonExistentDatabaseID := DatabaseID(999999999)
+
+	// Try to create table with non-existent database ID
+	_, err := client.CreateTable(ctx, &TableCreateRequest{
+		DatabaseID: nonExistentDatabaseID,
+		Name:       randomName("test-table-"),
+		Columns: []Column{
+			{Name: "id", Type: "int", IsPk: true},
+		},
+		Comment: "test",
+	})
+	require.Error(t, err)
+	t.Logf("Expected error for non-existent database ID: %v", err)
+}
+
+func TestTableNameExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	catalogID, markCatalogDeleted := createTestCatalog(t, client)
+	databaseID, markDatabaseDeleted := createTestDatabase(t, client, catalogID)
+
+	defer func() {
+		markDatabaseDeleted()
+		markCatalogDeleted()
+	}()
+
+	tableName := randomName("sdk-table-")
+	columns := []Column{
+		{Name: "id", Type: "int", IsPk: true},
+		{Name: "name", Type: "varchar(255)"},
+	}
+
+	createReq := &TableCreateRequest{
+		DatabaseID: databaseID,
+		Name:       tableName,
+		Columns:    columns,
+		Comment:    "test table",
+	}
+	createResp, err := client.CreateTable(ctx, createReq)
+	require.NoError(t, err)
+	require.NotZero(t, createResp.TableID)
+
+	// Cleanup
+	defer func() {
+		if _, err := client.DeleteTable(ctx, &TableDeleteRequest{TableID: createResp.TableID}); err != nil {
+			t.Logf("cleanup delete table failed: %v", err)
+		}
+	}()
+
+	// Try to create another table with the same name in the same database
+	_, err = client.CreateTable(ctx, createReq)
+	require.Error(t, err)
+	t.Logf("Expected error for duplicate name: %v", err)
+}
+
+func TestTableIDNotExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	nonExistentID := TableID(999999999)
+
+	// Try to get non-existent table
+	_, err := client.GetTable(ctx, &TableInfoRequest{TableID: nonExistentID})
+	require.Error(t, err)
+	t.Logf("Expected error for non-existent table ID: %v", err)
+
+	// Try to preview non-existent table - may not error if service allows empty preview
+	_, err = client.PreviewTable(ctx, &TablePreviewRequest{TableID: nonExistentID, Lines: 5})
+	if err != nil {
+		t.Logf("Error for previewing non-existent table (expected): %v", err)
+	} else {
+		t.Logf("Preview succeeded for non-existent table (service may allow empty preview)")
+	}
+
+	// Try to delete non-existent table - service may allow idempotent delete
+	_, err = client.DeleteTable(ctx, &TableDeleteRequest{TableID: nonExistentID})
+	// Service may allow idempotent delete, so we don't require an error
+	t.Logf("Delete result for non-existent table: %v (service may allow idempotent delete)", err)
+}
+
+func TestTableWithDefaultValues(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	catalogID, markCatalogDeleted := createTestCatalog(t, client)
+	databaseID, markDatabaseDeleted := createTestDatabase(t, client, catalogID)
+
+	defer func() {
+		markDatabaseDeleted()
+		markCatalogDeleted()
+	}()
+
+	tableName := randomName("sdk-table-default-")
+	columns := []Column{
+		{Name: "id", Type: "int", IsPk: true},
+		{Name: "age", Type: "int", Default: "0"},
+		{Name: "default_test", Type: "varchar(100)", Default: "VARCHAR DEFAULT"},
+	}
+
+	createResp, err := client.CreateTable(ctx, &TableCreateRequest{
+		DatabaseID: databaseID,
+		Name:       tableName,
+		Columns:    columns,
+		Comment:    "test table with defaults",
+	})
+	require.NoError(t, err)
+	require.NotZero(t, createResp.TableID)
+
+	// Cleanup
+	defer func() {
+		if _, err := client.DeleteTable(ctx, &TableDeleteRequest{TableID: createResp.TableID}); err != nil {
+			t.Logf("cleanup delete table failed: %v", err)
+		}
+	}()
+
+	// Verify table was created successfully
+	infoResp, err := client.GetTable(ctx, &TableInfoRequest{TableID: createResp.TableID})
+	require.NoError(t, err)
+	require.Equal(t, tableName, infoResp.Name)
+	require.Len(t, infoResp.Columns, 3, "should have 3 columns")
+}

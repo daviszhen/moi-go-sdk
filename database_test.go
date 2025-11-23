@@ -99,3 +99,103 @@ func TestDatabaseNilRequestErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseCatalogIDNotExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	nonExistentCatalogID := CatalogID(999999999)
+
+	// Try to create database with non-existent catalog ID
+	_, err := client.CreateDatabase(ctx, &DatabaseCreateRequest{
+		CatalogID:    nonExistentCatalogID,
+		DatabaseName: randomName("test-db-"),
+		Comment:      "test",
+	})
+	require.Error(t, err)
+	t.Logf("Expected error for non-existent catalog ID: %v", err)
+}
+
+func TestDatabaseNameExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	catalogID, markCatalogDeleted := createTestCatalog(t, client)
+	defer markCatalogDeleted()
+
+	databaseName := randomName("sdk-db-")
+	createReq := &DatabaseCreateRequest{
+		DatabaseName: databaseName,
+		CatalogID:    catalogID,
+		Comment:      "test database",
+	}
+	createResp, err := client.CreateDatabase(ctx, createReq)
+	require.NoError(t, err)
+	require.NotZero(t, createResp.DatabaseID)
+
+	// Cleanup
+	defer func() {
+		if _, err := client.DeleteDatabase(ctx, &DatabaseDeleteRequest{DatabaseID: createResp.DatabaseID}); err != nil {
+			t.Logf("cleanup delete database failed: %v", err)
+		}
+	}()
+
+	// Try to create another database with the same name in the same catalog
+	_, err = client.CreateDatabase(ctx, createReq)
+	require.Error(t, err)
+	t.Logf("Expected error for duplicate name: %v", err)
+}
+
+func TestDatabaseInvalidName(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	catalogID, markCatalogDeleted := createTestCatalog(t, client)
+	defer markCatalogDeleted()
+
+	tests := []struct {
+		name         string
+		databaseName string
+	}{
+		{"SpecialChars", "aa\"b'"},
+		{"Empty", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			createReq := &DatabaseCreateRequest{
+				DatabaseName: tc.databaseName,
+				CatalogID:    catalogID,
+				Comment:      "test",
+			}
+			_, err := client.CreateDatabase(ctx, createReq)
+			require.Error(t, err, "should fail for invalid name: %s", tc.databaseName)
+			t.Logf("Expected error for invalid name '%s': %v", tc.databaseName, err)
+		})
+	}
+}
+
+func TestDatabaseIDNotExists(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	nonExistentID := DatabaseID(999999999)
+
+	// Try to get non-existent database
+	_, err := client.GetDatabase(ctx, &DatabaseInfoRequest{DatabaseID: nonExistentID})
+	require.Error(t, err)
+	t.Logf("Expected error for non-existent database ID: %v", err)
+
+	// Try to update non-existent database
+	_, err = client.UpdateDatabase(ctx, &DatabaseUpdateRequest{
+		DatabaseID: nonExistentID,
+		Comment:    "test",
+	})
+	require.Error(t, err)
+	t.Logf("Expected error for updating non-existent database: %v", err)
+
+	// Try to delete non-existent database
+	_, err = client.DeleteDatabase(ctx, &DatabaseDeleteRequest{DatabaseID: nonExistentID})
+	require.Error(t, err)
+	t.Logf("Expected error for deleting non-existent database: %v", err)
+}
