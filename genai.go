@@ -13,10 +13,30 @@ import (
 
 // PipelineFile represents a single file to be uploaded when creating a GenAI pipeline.
 type PipelineFile struct {
-	FileName string
-	Reader   io.Reader
+	FileName string   // FileName is the name of the file
+	Reader   io.Reader // Reader provides the file content
 }
 
+// CreateGenAIPipeline creates a new GenAI pipeline with optional file uploads.
+//
+// If files are provided, they will be uploaded as part of the pipeline creation.
+// If no files are provided, only the pipeline configuration is sent.
+//
+// Example:
+//
+//	file, _ := os.Open("data.csv")
+//	defer file.Close()
+//
+//	resp, err := client.CreateGenAIPipeline(ctx, &sdk.GenAICreatePipelineRequest{
+//		Name: "my-pipeline",
+//		// ... other config
+//	}, []sdk.PipelineFile{
+//		{FileName: "data.csv", Reader: file},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Created pipeline ID: %s\n", resp.PipelineID)
 func (c *RawClient) CreateGenAIPipeline(ctx context.Context, req *GenAICreatePipelineRequest, files []PipelineFile, opts ...CallOption) (*GenAICreatePipelineResponse, error) {
 	if len(files) == 0 {
 		if req == nil {
@@ -111,6 +131,17 @@ func (c *RawClient) CreateGenAIPipeline(ctx context.Context, req *GenAICreatePip
 	return &pipelineResp, nil
 }
 
+// GetGenAIJob retrieves detailed information about a GenAI job.
+//
+// Returns the job status, results, and other metadata.
+//
+// Example:
+//
+//	resp, err := client.GetGenAIJob(ctx, "job-id-123")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Job Status: %s\n", resp.Status)
 func (c *RawClient) GetGenAIJob(ctx context.Context, jobID string, opts ...CallOption) (*GenAIGetJobDetailResponse, error) {
 	if strings.TrimSpace(jobID) == "" {
 		return nil, fmt.Errorf("jobID cannot be empty")
@@ -123,6 +154,24 @@ func (c *RawClient) GetGenAIJob(ctx context.Context, jobID string, opts ...CallO
 	return &resp, nil
 }
 
+// DownloadGenAIResult downloads a file result from a GenAI job.
+//
+// Returns a FileStream that must be closed by the caller. The stream contains
+// the file content that can be read directly.
+//
+// Example:
+//
+//	stream, err := client.DownloadGenAIResult(ctx, "file-id-123")
+//	if err != nil {
+//		return err
+//	}
+//	defer stream.Close()
+//
+//	data, err := io.ReadAll(stream.Body)
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Downloaded %d bytes\n", len(data))
 func (c *RawClient) DownloadGenAIResult(ctx context.Context, fileID string, opts ...CallOption) (*FileStream, error) {
 	if strings.TrimSpace(fileID) == "" {
 		return nil, fmt.Errorf("fileID cannot be empty")

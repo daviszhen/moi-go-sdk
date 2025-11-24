@@ -35,20 +35,40 @@ type TablePrivInfo struct {
 }
 
 // CreateTableRole creates a role for table privileges, or returns the existing role if it already exists.
-// It first queries for the role by name using RawClient. If the role exists, it returns the role ID and created=false.
-// If the role doesn't exist, it creates a new role with the specified name, comment, and table privileges.
-// Parameters:
-//   - roleName: the name of the role (required)
-//   - comment: the description/comment of the role
-//   - tablePrivs: the list of table privilege information, each element contains:
-//   - TableID: the table ID
-//   - AuthorityCodeList: privilege codes with optional rules (recommended)
-//   - PrivCodes: simple privilege codes without rules (deprecated, for backward compatibility)
-//     If both AuthorityCodeList and PrivCodes are provided, AuthorityCodeList takes precedence.
+//
+// It first queries for the role by name using RawClient. If the role exists, it returns
+// the role ID and created=false. If the role doesn't exist, it creates a new role with
+// the specified name, comment, and table privileges.
+//
+// The tablePrivs parameter can use either AuthorityCodeList (recommended, supports rules)
+// or PrivCodes (deprecated, for backward compatibility). If both are provided,
+// AuthorityCodeList takes precedence.
+//
+// Example:
+//
+//	roleID, created, err := sdkClient.CreateTableRole(ctx, "my-role", "Role description", []sdk.TablePrivInfo{
+//		{
+//			TableID: 123,
+//			AuthorityCodeList: []*sdk.AuthorityCodeAndRule{
+//				{
+//					Code:     "DT8", // SELECT permission
+//					RuleList: nil,
+//				},
+//			},
+//		},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	if created {
+//		fmt.Printf("Created new role: %d\n", roleID)
+//	} else {
+//		fmt.Printf("Role already exists: %d\n", roleID)
+//	}
 //
 // Returns:
 //   - roleID: the ID of the role (existing or newly created)
-//   - created: indicates whether the role was newly created (true) or already existed (false)
+//   - created: true if the role was newly created, false if it already existed
 //   - error: any error that occurred
 func (c *SDKClient) CreateTableRole(ctx context.Context, roleName string, comment string, tablePrivs []TablePrivInfo) (roleID RoleID, created bool, err error) {
 	if roleName == "" {
@@ -248,22 +268,39 @@ func (c *SDKClient) CreateTableRole(ctx context.Context, roleName string, commen
 }
 
 // UpdateTableRole updates an existing role with table privileges.
-// It updates the role's object-level privileges (table privileges) while preserving or updating global privileges.
-// Parameters:
-//   - roleID: the ID of the role to update (required)
-//   - comment: the description/comment of the role (optional, empty string to keep existing)
-//   - tablePrivs: the list of table privilege information, each element contains:
-//   - TableID: the table ID
-//   - AuthorityCodeList: privilege codes with optional rules (recommended)
-//   - PrivCodes: simple privilege codes without rules (deprecated, for backward compatibility)
-//     If both AuthorityCodeList and PrivCodes are provided, AuthorityCodeList takes precedence.
-//   - globalPrivs: global privilege codes (optional, nil to keep existing, empty slice to remove all)
 //
-// Returns:
-//   - error: any error that occurred
+// It updates the role's object-level privileges (table privileges) while preserving
+// or updating global privileges. The comment and globalPrivs parameters have special
+// semantics:
+//   - If comment is empty, the existing comment will be preserved
+//   - If globalPrivs is nil, existing global privileges will be preserved
+//   - If globalPrivs is an empty slice, all global privileges will be removed
 //
-// Note: If comment is empty, the existing comment will be preserved. If globalPrivs is nil, existing global
-// privileges will be preserved. If globalPrivs is an empty slice, all global privileges will be removed.
+// The tablePrivs parameter can use either AuthorityCodeList (recommended, supports rules)
+// or PrivCodes (deprecated, for backward compatibility). If both are provided,
+// AuthorityCodeList takes precedence.
+//
+// Example:
+//
+//	// Update table privileges, preserve comment and global privileges
+//	err := sdkClient.UpdateTableRole(ctx, 456, "", []sdk.TablePrivInfo{
+//		{
+//			TableID: 123,
+//			AuthorityCodeList: []*sdk.AuthorityCodeAndRule{
+//				{Code: "DT8", RuleList: nil},
+//			},
+//		},
+//	}, nil)
+//
+//	// Update comment and global privileges
+//	err := sdkClient.UpdateTableRole(ctx, 456, "New description", []sdk.TablePrivInfo{
+//		// ... table privileges
+//	}, []string{"U1", "R1"})
+//
+//	// Remove all global privileges
+//	err := sdkClient.UpdateTableRole(ctx, 456, "", []sdk.TablePrivInfo{
+//		// ... table privileges
+//	}, []string{})
 func (c *SDKClient) UpdateTableRole(ctx context.Context, roleID RoleID, comment string, tablePrivs []TablePrivInfo, globalPrivs []string) error {
 	if roleID == 0 {
 		return fmt.Errorf("role_id is required")

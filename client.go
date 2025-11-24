@@ -1,3 +1,24 @@
+// Package sdk provides a Go client library for interacting with the MOI Catalog Service.
+//
+// The package provides two types of clients:
+//   - RawClient: Low-level client that provides direct access to API endpoints
+//   - SDKClient: High-level client that provides convenient business-oriented APIs
+//
+// Example usage:
+//
+//	// Create a raw client
+//	client, err := sdk.NewRawClient("https://api.example.com", "your-api-key")
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//
+//	// Create a catalog
+//	resp, err := client.CreateCatalog(ctx, &sdk.CatalogCreateRequest{
+//		CatalogName: "my-catalog",
+//		Comment:     "My catalog",
+//	})
+//
+// For more information, see the documentation at https://github.com/matrixorigin/moi-go-sdk/docs
 package sdk
 
 import (

@@ -341,10 +341,18 @@ type CheckPriv struct {
 	ObjectID PrivObjectID `json:"obj_id"`
 }
 
+// String returns the string representation of the PrivObjectID.
 func (po PrivObjectID) String() string {
 	return string(po)
 }
 
+// IntToPrivObjectID converts an int64 to a PrivObjectID.
+//
+// This is a convenience function for creating PrivObjectID values from integer IDs.
+//
+// Example:
+//
+//	objID := sdk.IntToPrivObjectID(123)
 func IntToPrivObjectID(id int64) PrivObjectID {
 	return PrivObjectID(fmt.Sprintf("%d", id))
 }

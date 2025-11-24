@@ -197,6 +197,30 @@ type PreviewRow struct {
 // UploadLocalFiles uploads local files to connector.
 // files is a map of form field name to file reader and filename.
 // meta is the file metadata array in JSON format.
+// UploadLocalFiles uploads multiple local files to the connector service.
+//
+// This method uploads files that will be used for data import tasks. The files
+// are uploaded to a temporary storage and you receive conn_file_ids that can be
+// used with FilePreview and UploadConnectorFile.
+//
+// Example:
+//
+//	file1, _ := os.Open("data1.csv")
+//	file2, _ := os.Open("data2.csv")
+//	defer file1.Close()
+//	defer file2.Close()
+//
+//	resp, err := client.UploadLocalFiles(ctx, []sdk.FileUploadItem{
+//		{File: file1, FileName: "data1.csv"},
+//		{File: file2, FileName: "data2.csv"},
+//	}, []sdk.FileMeta{
+//		{Filename: "data1.csv", Path: "/"},
+//		{Filename: "data2.csv", Path: "/"},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Uploaded files: %v\n", resp.ConnFileIds)
 func (c *RawClient) UploadLocalFiles(ctx context.Context, files []FileUploadItem, meta []FileMeta, opts ...CallOption) (*LocalFileUploadResponse, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("at least one file is required")
@@ -306,9 +330,24 @@ func (c *RawClient) UploadLocalFiles(ctx context.Context, files []FileUploadItem
 	return &uploadResp, nil
 }
 
-// UploadLocalFile uploads a single local file to connector.
-// fileReader is the file content reader, fileName is the filename,
-// meta is the file metadata array in JSON format.
+// UploadLocalFile uploads a single local file to the connector service.
+//
+// This is a convenience method that wraps UploadLocalFiles for a single file.
+// The fileReader provides the file content, fileName is the filename, and meta
+// is the file metadata array.
+//
+// Example:
+//
+//	file, _ := os.Open("data.csv")
+//	defer file.Close()
+//
+//	resp, err := client.UploadLocalFile(ctx, file, "data.csv", []sdk.FileMeta{
+//		{Filename: "data.csv", Path: "/"},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	connFileID := resp.ConnFileIds[0]
 func (c *RawClient) UploadLocalFile(ctx context.Context, fileReader io.Reader, fileName string, meta []FileMeta, opts ...CallOption) (*LocalFileUploadResponse, error) {
 	return c.UploadLocalFiles(ctx, []FileUploadItem{
 		{
@@ -318,7 +357,20 @@ func (c *RawClient) UploadLocalFile(ctx context.Context, fileReader io.Reader, f
 	}, meta, opts...)
 }
 
-// UploadLocalFileFromPath uploads a local file from file system path to connector.
+// UploadLocalFileFromPath uploads a local file from the file system path to the connector service.
+//
+// This is a convenience method that opens the file from the given path and uploads it.
+// The filename is automatically extracted from the path.
+//
+// Example:
+//
+//	resp, err := client.UploadLocalFileFromPath(ctx, "/path/to/data.csv", []sdk.FileMeta{
+//		{Filename: "data.csv", Path: "/"},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	connFileID := resp.ConnFileIds[0]
 func (c *RawClient) UploadLocalFileFromPath(ctx context.Context, filePath string, meta []FileMeta, opts ...CallOption) (*LocalFileUploadResponse, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -332,10 +384,27 @@ func (c *RawClient) UploadLocalFileFromPath(ctx context.Context, filePath string
 	return c.UploadLocalFile(ctx, file, fileName, meta, opts...)
 }
 
-// FilePreview previews a file from connector or local upload.
+// FilePreview previews a file from connector or local upload to analyze its structure.
+//
 // The request must specify either:
 //   - connector_id with uri or conn_file_id (for connector files)
 //   - conn_file_id without connector_id (for local upload files)
+//
+// The response includes file structure information such as column names, data types,
+// and sample data, which can be used to build TableConfig for data import.
+//
+// Example:
+//
+//	resp, err := client.FilePreview(ctx, &sdk.FilePreviewRequest{
+//		ConnFileId: "conn-file-id-123",
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	// Use resp to build TableConfig for import
+//	for _, col := range resp.TableColumn {
+//		fmt.Printf("Column: %s, Type: %s\n", col.ColumnName, col.DataType)
+//	}
 func (c *RawClient) FilePreview(ctx context.Context, req *FilePreviewRequest, opts ...CallOption) (*FilePreviewResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -418,9 +487,48 @@ func (c *RawClient) FilePreview(ctx context.Context, req *FilePreviewRequest, op
 	return &previewResp, nil
 }
 
-// UploadConnectorFile uploads files to connector using the /connectors/upload endpoint.
+// UploadConnectorFile uploads files to connector and creates a data import task.
+//
 // This endpoint supports advanced features like file filtering, deduplication, and table configuration.
+// It can either upload new files or reference already uploaded files via TableConfig.ConnFileIDs.
+//
 // Note: This is different from the UploadFile method in file.go which uploads to /catalog/file/upload.
+//
+// Example - Upload new files and import to new table:
+//
+//	file, _ := os.Open("data.csv")
+//	defer file.Close()
+//
+//	resp, err := client.UploadConnectorFile(ctx, &sdk.UploadFileRequest{
+//		VolumeID: "123456",
+//		Files: []sdk.FileUploadItem{
+//			{File: file, FileName: "data.csv"},
+//		},
+//		Meta: []sdk.FileMeta{
+//			{Filename: "data.csv", Path: "/"},
+//		},
+//		TableConfig: &sdk.TableConfig{
+//			NewTable:    true,
+//			DatabaseID:  123,
+//			ConnFileIDs: []string{}, // Will be filled from uploaded files
+//			// ... other table config
+//		},
+//	})
+//
+// Example - Import already uploaded files to existing table:
+//
+//	resp, err := client.UploadConnectorFile(ctx, &sdk.UploadFileRequest{
+//		VolumeID: "123456",
+//		Files:    []sdk.FileUploadItem{}, // Empty, files already uploaded
+//		Meta:     []sdk.FileMeta{{Filename: "data.csv", Path: "/"}},
+//		TableConfig: &sdk.TableConfig{
+//			NewTable:    false,
+//			DatabaseID:  123,
+//			TableID:     456,
+//			ConnFileIDs: []string{"conn-file-id-123"},
+//			// ... column mappings
+//		},
+//	})
 func (c *RawClient) UploadConnectorFile(ctx context.Context, req *UploadFileRequest, opts ...CallOption) (*UploadFileResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
