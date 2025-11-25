@@ -22,7 +22,7 @@
 - ✅ **folder.go** - 5 个方法（Create, Update, Delete, Clean, GetRefList）
 
 ### Connector
-- ✅ **connector.go** - 5 个方法（UploadLocalFiles, UploadLocalFile, UploadLocalFileFromPath, FilePreview, UploadConnectorFile）
+- ✅ **connector.go** - 7 个方法（UploadLocalFiles, UploadLocalFile, UploadLocalFileFromPath, FilePreview, UploadConnectorFile, DownloadConnectorFile, DeleteConnectorFile）
 
 ### User 和 Role
 - ✅ **user.go** - 13 个方法（Create, Delete, GetDetail, List, UpdatePassword, UpdateInfo, UpdateRoles, UpdateStatus, GetMyAPIKey, RefreshMyAPIKey, GetMyInfo, UpdateMyInfo, UpdateMyPassword）

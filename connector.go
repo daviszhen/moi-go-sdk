@@ -194,6 +194,31 @@ type PreviewRow struct {
 	CharColumnName string `json:"charColumnName"`
 }
 
+// ConnectorFileDownloadRequest represents a request to generate a download URL
+// for a previously uploaded connector file.
+type ConnectorFileDownloadRequest struct {
+	ConnFileId string `json:"conn_file_id"`
+}
+
+// ConnectorFileDownloadResponse contains the signed download URL that can be
+// used to download the connector file.
+type ConnectorFileDownloadResponse struct {
+	URL string `json:"url"`
+}
+
+// ConnectorFileDeleteRequest represents a request to delete a connector file by
+// its conn_file_id.
+type ConnectorFileDeleteRequest struct {
+	ConnFileId string `json:"conn_file_id"`
+}
+
+// ConnectorFileDeleteResponse represents the response from deleting a connector
+// file. The backend currently does not return additional fields, but the type
+// is defined for future compatibility.
+type ConnectorFileDeleteResponse struct {
+	Success bool `json:"success"`
+}
+
 // UploadLocalFiles uploads local files to connector.
 // files is a map of form field name to file reader and filename.
 // meta is the file metadata array in JSON format.
@@ -718,4 +743,52 @@ func (c *RawClient) UploadConnectorFile(ctx context.Context, req *UploadFileRequ
 	}
 
 	return &uploadResp, nil
+}
+
+// DownloadConnectorFile retrieves a signed download URL for a connector file.
+//
+// Example:
+//
+//	resp, err := client.DownloadConnectorFile(ctx, &sdk.ConnectorFileDownloadRequest{
+//		ConnFileId: "conn-file-id-123",
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Download URL: %s\n", resp.URL)
+func (c *RawClient) DownloadConnectorFile(ctx context.Context, req *ConnectorFileDownloadRequest, opts ...CallOption) (*ConnectorFileDownloadResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if strings.TrimSpace(req.ConnFileId) == "" {
+		return nil, fmt.Errorf("conn_file_id is required")
+	}
+
+	var resp ConnectorFileDownloadResponse
+	if err := c.postJSON(ctx, "/connectors/file/download", req, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeleteConnectorFile deletes a connector file by its conn_file_id.
+//
+// Example:
+//
+//	_, err := client.DeleteConnectorFile(ctx, &sdk.ConnectorFileDeleteRequest{
+//		ConnFileId: "conn-file-id-123",
+//	})
+func (c *RawClient) DeleteConnectorFile(ctx context.Context, req *ConnectorFileDeleteRequest, opts ...CallOption) (*ConnectorFileDeleteResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if strings.TrimSpace(req.ConnFileId) == "" {
+		return nil, fmt.Errorf("conn_file_id is required")
+	}
+
+	var resp ConnectorFileDeleteResponse
+	if err := c.postJSON(ctx, "/connectors/file/delete", req, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

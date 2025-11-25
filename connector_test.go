@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -632,6 +633,117 @@ func TestFilePreviewLiveFlow(t *testing.T) {
 		require.NotNil(t, resp)
 		t.Logf("File preview with RowStart=2 successful, rows count: %d", len(resp.Rows))
 	})
+}
+
+func TestDownloadConnectorFileNilRequest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	resp, err := client.DownloadConnectorFile(ctx, nil)
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
+
+func TestDownloadConnectorFileValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	resp, err := client.DownloadConnectorFile(ctx, &ConnectorFileDownloadRequest{})
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "conn_file_id is required")
+}
+
+func TestDeleteConnectorFileNilRequest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	resp, err := client.DeleteConnectorFile(ctx, nil)
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
+
+func TestDeleteConnectorFileValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	resp, err := client.DeleteConnectorFile(ctx, &ConnectorFileDeleteRequest{})
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "conn_file_id is required")
+}
+
+func TestDownloadConnectorFileLiveFlow(t *testing.T) {
+	ctx := context.Background()
+	client, err := NewRawClient(testBaseURL, testAPIKey)
+	require.NoError(t, err)
+
+	connFileId, expectedContent := uploadConnectorTestFile(t, client, "download")
+	t.Cleanup(func() {
+		if _, err := client.DeleteConnectorFile(ctx, &ConnectorFileDeleteRequest{ConnFileId: connFileId}); err != nil {
+			t.Logf("cleanup delete connector file failed: %v", err)
+		}
+	})
+
+	resp, err := client.DownloadConnectorFile(ctx, &ConnectorFileDownloadRequest{
+		ConnFileId: connFileId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotEmpty(t, resp.URL)
+	t.Logf("Download URL: %s", resp.URL)
+
+	downloadResp, err := http.Get(resp.URL)
+	require.NoError(t, err)
+	defer downloadResp.Body.Close()
+	require.Equal(t, http.StatusOK, downloadResp.StatusCode)
+
+	body, err := io.ReadAll(downloadResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, expectedContent, body)
+}
+
+func TestDeleteConnectorFileLiveFlow(t *testing.T) {
+	ctx := context.Background()
+	client, err := NewRawClient(testBaseURL, testAPIKey)
+	require.NoError(t, err)
+
+	connFileId, _ := uploadConnectorTestFile(t, client, "delete")
+	resp, err := client.DeleteConnectorFile(ctx, &ConnectorFileDeleteRequest{
+		ConnFileId: connFileId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	t.Logf("Delete connector file %s completed", connFileId)
+}
+
+func uploadConnectorTestFile(t *testing.T, client *RawClient, prefix string) (string, []byte) {
+	t.Helper()
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	fileName := randomName("sdk-"+prefix+"-") + ".txt"
+	filePath := filepath.Join(tmpDir, fileName)
+	fileContent := []byte("connector sdk test file " + randomName("content-"))
+	err := os.WriteFile(filePath, fileContent, 0644)
+	require.NoError(t, err)
+
+	meta := []FileMeta{
+		{
+			Filename: fileName,
+			Path:     "/sdk/tests/" + prefix,
+		},
+	}
+
+	resp, err := client.UploadLocalFileFromPath(ctx, filePath, meta)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotEmpty(t, resp.ConnFileIds)
+	return resp.ConnFileIds[0], fileContent
 }
 
 // ============ Tests for UploadConnectorFile ============

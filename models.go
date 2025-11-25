@@ -1339,15 +1339,19 @@ type DbAndTablesInfo struct {
 	TableNames []string `json:"table_names"`
 }
 
+// NL2SQLRunSQLResponse wraps the results returned by the NL2SQL run_sql API.
 type NL2SQLRunSQLResponse struct {
 	Results []NL2SQLResult `json:"results"`
 }
 
+// NL2SQLResult contains the column metadata and row data for a single NL2SQL statement.
 type NL2SQLResult struct {
-	DbName    string      `json:"db_name"`
-	Statement string      `json:"statement"`
-	Results   interface{} `json:"results"`
+	Columns []string    `json:"columns"`
+	Rows    []NL2SQLRow `json:"rows"`
 }
+
+// NL2SQLRow represents one row in an NL2SQL result set.
+type NL2SQLRow []string
 
 // ============ Models: NL2SQL Knowledge types ============
 

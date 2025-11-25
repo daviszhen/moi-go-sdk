@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -180,7 +181,7 @@ func TestUpdateTableRole_LiveFlow(t *testing.T) {
 	require.Equal(t, updatedComment, roleInfo.Comment)
 	// Note: Service may validate table existence, so ObjAuthorityList might be empty if tables don't exist
 	// or if service filters out invalid table IDs
-	t.Logf("Role info after update: Comment=%s, GlobalPrivs=%d, ObjPrivs=%d", 
+	t.Logf("Role info after update: Comment=%s, GlobalPrivs=%d, ObjPrivs=%d",
 		roleInfo.Comment, len(roleInfo.AuthorityList), len(roleInfo.ObjAuthorityList))
 	if len(roleInfo.ObjAuthorityList) > 0 {
 		require.Equal(t, 2, len(roleInfo.ObjAuthorityList), "should have 2 table privileges")
@@ -224,15 +225,15 @@ func TestUpdateTableRole_LiveFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, updatedComment, roleInfo.Comment, "comment should be preserved when empty string provided")
 	require.Equal(t, 0, len(roleInfo.AuthorityList), "global privileges should be removed when empty slice provided")
-	
+
 	// Note: Service may validate table existence, so ObjAuthorityList might be empty if validation fails
-	t.Logf("Role info after second update: Comment=%s, GlobalPrivs=%d, ObjPrivs=%d", 
+	t.Logf("Role info after second update: Comment=%s, GlobalPrivs=%d, ObjPrivs=%d",
 		roleInfo.Comment, len(roleInfo.AuthorityList), len(roleInfo.ObjAuthorityList))
-	
+
 	// If ObjAuthorityList is not empty, verify the rules
 	if len(roleInfo.ObjAuthorityList) > 0 {
 		require.Equal(t, 1, len(roleInfo.ObjAuthorityList), "should have 1 table privilege with rules")
-		
+
 		// Verify the rule was set correctly
 		for _, objPriv := range roleInfo.ObjAuthorityList {
 			if objPriv.ObjType == ObjTypeTable.String() {
@@ -263,4 +264,55 @@ func TestUpdateTableRole_InvalidRoleID(t *testing.T) {
 	err := client.UpdateTableRole(ctx, 0, "test", []TablePrivInfo{}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "role_id is required")
+}
+
+func TestSDKClientRunSQL(t *testing.T) {
+	client := newTestClient(t)
+	sdkClient := NewSDKClient(client)
+	ctx := context.Background()
+
+	catalogName := randomName("sdk-nl2sql-cat-")
+	catalogResp, err := client.CreateCatalog(ctx, &CatalogCreateRequest{
+		CatalogName: catalogName,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if _, err := client.DeleteCatalog(ctx, &CatalogDeleteRequest{CatalogID: catalogResp.CatalogID}); err != nil {
+			t.Logf("cleanup delete catalog failed: %v", err)
+		}
+	})
+
+	databaseName := randomName("sdk_nl2sql_db_")
+	dbResp, err := client.CreateDatabase(ctx, &DatabaseCreateRequest{
+		CatalogID:    catalogResp.CatalogID,
+		DatabaseName: databaseName,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if _, err := client.DeleteDatabase(ctx, &DatabaseDeleteRequest{DatabaseID: dbResp.DatabaseID}); err != nil {
+			t.Logf("cleanup delete database failed: %v", err)
+		}
+	})
+
+	tableName := randomName("sdk_nl2sql_table_")
+	tableResp, err := client.CreateTable(ctx, &TableCreateRequest{
+		DatabaseID: dbResp.DatabaseID,
+		Name:       tableName,
+		Columns: []Column{
+			{Name: "id", Type: "INT", IsPk: true},
+			{Name: "name", Type: "VARCHAR(32)"},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if _, err := client.DeleteTable(ctx, &TableDeleteRequest{TableID: tableResp.TableID}); err != nil {
+			t.Logf("cleanup delete table failed: %v", err)
+		}
+	})
+
+	statement := fmt.Sprintf("select * from `%s`.`%s`", databaseName, tableName)
+	resp, err := sdkClient.RunSQL(ctx, statement)
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Results)
+	require.Equal(t, []string{"id", "name"}, resp.Results[0].Columns)
 }

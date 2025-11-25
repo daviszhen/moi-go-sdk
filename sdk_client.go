@@ -457,3 +457,17 @@ func (c *SDKClient) ImportLocalFileToTable(ctx context.Context, tableConfig *Tab
 	// Call the raw client's UploadConnectorFile method
 	return c.raw.UploadConnectorFile(ctx, uploadReq)
 }
+
+// RunSQL executes a SQL statement using the NL2SQL RunSQL operation.
+//
+// The statement must reference tables using fully qualified names (database.table).
+// This requirement allows the catalog service to route the query to the correct database.
+func (c *SDKClient) RunSQL(ctx context.Context, statement string, opts ...CallOption) (*NL2SQLRunSQLResponse, error) {
+	if strings.TrimSpace(statement) == "" {
+		return nil, fmt.Errorf("statement is required")
+	}
+	return c.raw.RunNL2SQL(ctx, &NL2SQLRunSQLRequest{
+		Operation: RunSQL,
+		Statement: statement,
+	}, opts...)
+}
