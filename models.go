@@ -1467,3 +1467,173 @@ type LogLogListResponse struct {
 	Total int              `json:"total"`
 	List  []LogLogResponse `json:"role_list"`
 }
+
+// ============ Models: LLM Proxy types ============
+
+// LLMTag represents a tag used in LLM Proxy (sessions and messages).
+type LLMTag struct {
+	Name      string `json:"name"`       // Tag name
+	Source    string `json:"source"`     // Tag source (application name)
+	CreatedAt int64  `json:"created_at"` // Creation time (Unix timestamp in seconds)
+	UpdatedAt int64  `json:"updated_at"` // Update time (Unix timestamp in seconds)
+}
+
+// LLMSession represents a session in LLM Proxy.
+type LLMSession struct {
+	ID        int64    `json:"id"`         // Session ID
+	Title     string   `json:"title"`      // Session title
+	Source    string   `json:"source"`     // Session source (application name)
+	UserID    string   `json:"user_id"`    // User ID
+	Config    string   `json:"config"`     // Session configuration (JSON string, application-defined)
+	Tags      []LLMTag `json:"tags"`       // Tags bound to the session
+	CreatedAt int64    `json:"created_at"` // Creation time (Unix timestamp in seconds)
+	UpdatedAt int64    `json:"updated_at"` // Update time (Unix timestamp in seconds)
+}
+
+// LLMSessionCreateRequest represents a request to create a session.
+type LLMSessionCreateRequest struct {
+	Title  string   `json:"title"`            // Required: Session title
+	Source string   `json:"source"`           // Required: Session source (application name)
+	UserID string   `json:"user_id"`          // Required: User ID
+	Config string   `json:"config,omitempty"` // Optional: Session configuration (JSON string)
+	Tags   []string `json:"tags,omitempty"`   // Optional: Tag names list
+}
+
+// LLMSessionListRequest represents a request to list sessions.
+type LLMSessionListRequest struct {
+	UserID   string   `json:"user_id,omitempty"`   // Filter by user ID
+	Source   string   `json:"source,omitempty"`    // Filter by source
+	Keyword  string   `json:"keyword,omitempty"`   // Keyword search (title)
+	Tags     []string `json:"tags,omitempty"`      // Tag filter (comma-separated, requires all match)
+	Page     int      `json:"page,omitempty"`      // Page number (starts from 1, default 1)
+	PageSize int      `json:"page_size,omitempty"` // Page size (default 20, max 100)
+}
+
+// LLMSessionListResponse represents a response from listing sessions.
+type LLMSessionListResponse struct {
+	Sessions []LLMSession `json:"sessions"`
+	Total    int64        `json:"total"`     // Total number of records
+	Page     int          `json:"page"`      // Current page number
+	PageSize int          `json:"page_size"` // Page size
+}
+
+// LLMSessionUpdateRequest represents a request to update a session.
+type LLMSessionUpdateRequest struct {
+	Title  *string   `json:"title,omitempty"`  // Session title
+	Source *string   `json:"source,omitempty"` // Session source
+	Config *string   `json:"config,omitempty"` // Session configuration
+	Tags   *[]string `json:"tags,omitempty"`   // Tag list (complete replacement)
+}
+
+// LLMSessionDeleteResponse represents a response from deleting a session.
+type LLMSessionDeleteResponse struct {
+	Message string `json:"message"`
+}
+
+// LLMMessageRole represents the role of a message.
+type LLMMessageRole string
+
+const (
+	LLMMessageRoleUser      LLMMessageRole = "user"       // User message
+	LLMMessageRoleSystem    LLMMessageRole = "system"     // System message
+	LLMMessageRoleAssistant LLMMessageRole = "assistant"  // Assistant reply
+	LLMMessageRoleAgentTool LLMMessageRole = "agent-tool" // Agent tool call
+)
+
+// LLMMessageStatus represents the status of a message.
+type LLMMessageStatus string
+
+const (
+	LLMMessageStatusSuccess LLMMessageStatus = "success" // Success
+	LLMMessageStatusFailed  LLMMessageStatus = "failed"  // Failed
+	LLMMessageStatusRetry   LLMMessageStatus = "retry"   // Retry
+	LLMMessageStatusAborted LLMMessageStatus = "aborted" // Aborted
+)
+
+// LLMChatMessage represents a chat message in LLM Proxy.
+type LLMChatMessage struct {
+	ID              int64            `json:"id"`               // Message ID
+	UserID          string           `json:"user_id"`          // User ID
+	SessionID       *int64           `json:"session_id"`       // Session ID (optional)
+	Source          string           `json:"source"`           // Application name
+	Role            LLMMessageRole   `json:"role"`             // Message role
+	OriginalContent string           `json:"original_content"` // Original content (user's original input)
+	Content         string           `json:"content"`          // Actual content sent to LLM
+	Model           string           `json:"model"`            // Model name used
+	Status          LLMMessageStatus `json:"status"`           // Status
+	Response        string           `json:"response"`         // LLM reply content
+	Tags            []LLMTag         `json:"tags"`             // Tags bound to the message
+	CreatedAt       int64            `json:"created_at"`       // Creation time (Unix timestamp in seconds)
+	UpdatedAt       int64            `json:"updated_at"`       // Update time (Unix timestamp in seconds)
+}
+
+// LLMChatMessageCreateRequest represents a request to create a chat message.
+type LLMChatMessageCreateRequest struct {
+	UserID          string           `json:"user_id"`                    // Required: User ID
+	SessionID       *int64           `json:"session_id,omitempty"`       // Optional: Session ID
+	Source          string           `json:"source"`                     // Required: Application name
+	Role            LLMMessageRole   `json:"role"`                       // Required: Message role
+	OriginalContent string           `json:"original_content,omitempty"` // Optional: User's original input
+	Content         string           `json:"content"`                    // Required: Actual content sent to LLM
+	Model           string           `json:"model"`                      // Required: Model name
+	Status          LLMMessageStatus `json:"status,omitempty"`           // Optional: Message status (default: success)
+	Response        string           `json:"response,omitempty"`         // Optional: LLM reply content
+	Tags            []string         `json:"tags,omitempty"`             // Optional: Tag names list
+}
+
+// LLMChatMessageListRequest represents a request to list chat messages.
+type LLMChatMessageListRequest struct {
+	UserID    string           `json:"user_id"`              // Required: User ID
+	SessionID *int64           `json:"session_id,omitempty"` // Optional: Session ID
+	Source    string           `json:"source,omitempty"`     // Optional: Application name
+	Role      LLMMessageRole   `json:"role,omitempty"`       // Optional: Message role
+	Status    LLMMessageStatus `json:"status,omitempty"`     // Optional: Message status
+	Tags      []string         `json:"tags,omitempty"`       // Optional: Tag filter (comma-separated, requires all match)
+	Page      int              `json:"page,omitempty"`       // Optional: Page number (starts from 1, default 1)
+	PageSize  int              `json:"page_size,omitempty"`  // Optional: Page size (default 20, max 100)
+}
+
+// LLMChatMessageListResponse represents a response from listing chat messages.
+type LLMChatMessageListResponse struct {
+	Messages []LLMChatMessage `json:"messages"`
+	Total    int64            `json:"total"`     // Total number of records
+	Page     int              `json:"page"`      // Current page number
+	PageSize int              `json:"page_size"` // Page size
+}
+
+// LLMChatMessageUpdateRequest represents a request to update a chat message.
+type LLMChatMessageUpdateRequest struct {
+	Status   *LLMMessageStatus `json:"status,omitempty"`   // Message status
+	Response *string           `json:"response,omitempty"` // LLM reply content (for streaming, use CONCAT to append)
+	Content  *string           `json:"content,omitempty"`  // Actual content sent to LLM
+	Tags     *[]string         `json:"tags,omitempty"`     // Tag list (complete replacement)
+}
+
+// LLMChatMessageDeleteResponse represents a response from deleting a chat message.
+type LLMChatMessageDeleteResponse struct {
+	Message string `json:"message"`
+}
+
+// LLMChatMessageTagsUpdateRequest represents a request to update message tags.
+type LLMChatMessageTagsUpdateRequest struct {
+	Tags []string `json:"tags"` // Required: Tag list (complete replacement)
+}
+
+// LLMChatMessageTagDeleteResponse represents a response from deleting a message tag.
+type LLMChatMessageTagDeleteResponse struct {
+	Message string `json:"message"`
+}
+
+// LLMSessionMessagesListRequest represents a request to list session messages.
+type LLMSessionMessagesListRequest struct {
+	Source string           `json:"source,omitempty"` // Filter by source
+	Role   LLMMessageRole   `json:"role,omitempty"`   // Filter by role
+	Status LLMMessageStatus `json:"status,omitempty"` // Filter by status
+	Model  string           `json:"model,omitempty"`  // Filter by model
+}
+
+// LLMLatestCompletedMessageResponse represents a response from getting the latest completed message ID.
+type LLMLatestCompletedMessageResponse struct {
+	SessionID int64 `json:"session_id"`
+	MessageID int64 `json:"message_id"`
+}
