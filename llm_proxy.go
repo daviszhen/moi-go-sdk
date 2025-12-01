@@ -29,14 +29,53 @@ func (c *RawClient) doLLMJSON(ctx context.Context, method, path string, body int
 		reader = bytes.NewReader(payload)
 	}
 
-	// Build full URL with /llm-proxy prefix
-	fullPath := "/llm-proxy" + ensureLeadingSlash(path)
-	resp, err := c.doRaw(ctx, method, fullPath, reader, callOpts, func(req *http.Request) {
-		req.Header.Set(headerAccept, mimeJSON)
-		if body != nil {
-			req.Header.Set(headerContentType, mimeJSON)
+	// Determine base URL and path
+	var baseURL string
+	var fullPath string
+
+	if callOpts.useDirectLLMProxy && c.llmProxyBaseURL != "" {
+		// Direct connection to LLM Proxy (no prefix)
+		baseURL = c.llmProxyBaseURL
+		fullPath = ensureLeadingSlash(path)
+	} else {
+		// Default: through MOI SDK gateway with /llm-proxy prefix
+		baseURL = c.baseURL
+		fullPath = "/llm-proxy" + ensureLeadingSlash(path)
+	}
+
+	// Build full URL
+	fullURL := baseURL + fullPath
+	if len(callOpts.query) > 0 {
+		delimiter := "?"
+		if strings.Contains(fullURL, "?") {
+			delimiter = "&"
 		}
-	})
+		fullURL = fullURL + delimiter + callOpts.query.Encode()
+	}
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set(headerAPIKey, c.apiKey)
+	if c.userAgent != "" {
+		req.Header.Set(headerUserAgent, c.userAgent)
+	}
+	mergeHeaders(req.Header, c.defaultHeaders, false)
+	if callOpts.requestID != "" {
+		req.Header.Set(headerRequestID, callOpts.requestID)
+	}
+	mergeHeaders(req.Header, callOpts.headers, true)
+	req.Header.Set(headerAccept, mimeJSON)
+	if body != nil {
+		req.Header.Set(headerContentType, mimeJSON)
+	}
+
+	// Execute request
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}

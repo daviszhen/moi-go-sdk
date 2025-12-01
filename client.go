@@ -44,11 +44,12 @@ const (
 
 // RawClient provides typed access to the catalog service HTTP APIs.
 type RawClient struct {
-	baseURL        string
-	apiKey         string
-	httpClient     *http.Client
-	userAgent      string
-	defaultHeaders http.Header
+	baseURL         string
+	apiKey          string
+	httpClient      *http.Client
+	userAgent       string
+	defaultHeaders  http.Header
+	llmProxyBaseURL string // Optional: direct LLM Proxy base URL for direct connection
 }
 
 // NewRawClient creates a new client using the provided baseURL and apiKey.
@@ -92,11 +93,12 @@ func NewRawClient(baseURL, apiKey string, opts ...ClientOption) (*RawClient, err
 	}
 
 	return &RawClient{
-		baseURL:        normalized,
-		apiKey:         trimmedKey,
-		httpClient:     httpClient,
-		userAgent:      cfg.userAgent,
-		defaultHeaders: cloneHeader(cfg.defaultHeaders),
+		baseURL:         normalized,
+		apiKey:          trimmedKey,
+		httpClient:      httpClient,
+		userAgent:       cfg.userAgent,
+		defaultHeaders:  cloneHeader(cfg.defaultHeaders),
+		llmProxyBaseURL: cfg.llmProxyBaseURL,
 	}, nil
 }
 

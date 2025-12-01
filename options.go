@@ -13,9 +13,10 @@ const (
 )
 
 type clientOptions struct {
-	httpClient     *http.Client
-	userAgent      string
-	defaultHeaders http.Header
+	httpClient      *http.Client
+	userAgent       string
+	defaultHeaders  http.Header
+	llmProxyBaseURL string // Optional: direct LLM Proxy base URL for direct connection
 }
 
 // ClientOption customizes the SDK client during construction.
@@ -124,6 +125,36 @@ func WithDefaultHeaders(headers http.Header) ClientOption {
 	}
 }
 
+// WithLLMProxyBaseURL sets the base URL for direct connection to LLM Proxy.
+//
+// When set, you can use WithDirectLLMProxy in CallOption to directly connect
+// to LLM Proxy instead of going through the MOI SDK gateway (which adds /llm-proxy prefix).
+//
+// Example:
+//
+//	client, err := sdk.NewRawClient(baseURL, apiKey,
+//		sdk.WithLLMProxyBaseURL("https://llm-proxy.example.com"))
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//
+//	// Use direct connection
+//	session, err := client.CreateLLMSession(ctx, req,
+//		sdk.WithDirectLLMProxy())
+func WithLLMProxyBaseURL(baseURL string) ClientOption {
+	return func(o *clientOptions) {
+		trimmed := strings.TrimSpace(baseURL)
+		if trimmed != "" {
+			parsed, err := url.Parse(trimmed)
+			if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+				parsed.RawQuery = ""
+				parsed.Fragment = ""
+				o.llmProxyBaseURL = strings.TrimRight(parsed.String(), "/")
+			}
+		}
+	}
+}
+
 // CallOption customizes individual SDK operations.
 //
 // CallOption functions are used with individual API method calls to customize
@@ -137,9 +168,10 @@ func WithDefaultHeaders(headers http.Header) ClientOption {
 type CallOption func(*callOptions)
 
 type callOptions struct {
-	headers   http.Header
-	query     url.Values
-	requestID string
+	headers           http.Header
+	query             url.Values
+	requestID         string
+	useDirectLLMProxy bool // Whether to use direct LLM Proxy connection
 }
 
 func newCallOptions(opts ...CallOption) callOptions {
@@ -247,6 +279,33 @@ func WithQuery(values url.Values) CallOption {
 				co.query.Add(key, v)
 			}
 		}
+	}
+}
+
+// WithDirectLLMProxy enables direct connection to LLM Proxy instead of going through the MOI SDK gateway.
+//
+// When this option is used, the request will be sent directly to the LLM Proxy base URL
+// (configured via WithLLMProxyBaseURL) without the /llm-proxy prefix.
+//
+// This option only works if WithLLMProxyBaseURL was set during client initialization.
+// If llmProxyBaseURL is not configured, this option will be ignored and the request
+// will fall back to the default behavior (through MOI SDK gateway with /llm-proxy prefix).
+//
+// Example:
+//
+//	// Initialize client with LLM Proxy base URL
+//	client, err := sdk.NewRawClient(baseURL, apiKey,
+//		sdk.WithLLMProxyBaseURL("https://llm-proxy.example.com"))
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//
+//	// Use direct connection
+//	session, err := client.CreateLLMSession(ctx, req,
+//		sdk.WithDirectLLMProxy())
+func WithDirectLLMProxy() CallOption {
+	return func(co *callOptions) {
+		co.useDirectLLMProxy = true
 	}
 }
 
