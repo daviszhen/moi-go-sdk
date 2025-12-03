@@ -1,6 +1,9 @@
 package sdk
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // This file contains all type definitions copied from catalog_service dependency.
 // All types are organized by their original packages for clarity.
@@ -1636,4 +1639,85 @@ type LLMSessionMessagesListRequest struct {
 type LLMLatestCompletedMessageResponse struct {
 	SessionID int64 `json:"session_id"`
 	MessageID int64 `json:"message_id"`
+}
+
+// ============ Handler: Data Asking types ============
+
+// DataAskingTableConfig represents table configuration for NL2SQL in data asking context.
+// This is different from the TableConfig used in table operations.
+type DataAskingTableConfig struct {
+	Type      string   `json:"type"` // "all", "none", "specified"
+	DbName    *string  `json:"db_name,omitempty"`
+	TableList []string `json:"table_list,omitempty"`
+}
+
+// FileConfig represents file configuration for RAG.
+type FileConfig struct {
+	Type             string   `json:"type"` // "all", "none", "specified"
+	TargetVolumeName *string  `json:"target_volume_name,omitempty"`
+	TargetVolumeID   *string  `json:"target_volume_id,omitempty"`
+	FileIDList       []string `json:"file_id_list,omitempty"`
+}
+
+// FilterConditions represents filter conditions.
+type FilterConditions struct {
+	Type string `json:"type"` // "all", "non_inter_data"
+}
+
+// CodeGroup represents a code group.
+type CodeGroup struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
+// DataScope represents data scope configuration.
+type DataScope struct {
+	Type      string      `json:"type"`                // "all", "specified"
+	CodeType  *int        `json:"code_type,omitempty"` // 0-company, 1-business unit
+	CodeGroup []CodeGroup `json:"code_group,omitempty"`
+}
+
+// DataSource represents data source configuration.
+type DataSource struct {
+	Type   string                 `json:"type"` // "all", "specified"
+	Tables *DataAskingTableConfig `json:"tables,omitempty"`
+	Files  *FileConfig            `json:"files,omitempty"`
+}
+
+// DataAnalysisConfig represents data analysis configuration.
+type DataAnalysisConfig struct {
+	DataCategory     string            `json:"data_category"` // "admin", "common"
+	FilterConditions *FilterConditions `json:"filter_conditions,omitempty"`
+	DataSource       *DataSource       `json:"data_source,omitempty"`
+	DataScope        *DataScope        `json:"data_scope,omitempty"`
+}
+
+// DataAnalysisRequest represents a request for data analysis.
+type DataAnalysisRequest struct {
+	Question    string              `json:"question"`
+	Source      *string             `json:"source,omitempty"`
+	SessionID   *string             `json:"session_id,omitempty"`
+	SessionName *string             `json:"session_name,omitempty"`
+	Config      *DataAnalysisConfig `json:"config,omitempty"`
+}
+
+// QuestionType represents the classification result of a question.
+type QuestionType struct {
+	Type       string  `json:"type"` // "query", "attribution"
+	Confidence float64 `json:"confidence"`
+	Reason     string  `json:"reason"`
+}
+
+// DataAnalysisStreamEvent represents a single event in the SSE stream.
+// The actual structure depends on the event type.
+type DataAnalysisStreamEvent struct {
+	Type   string                 `json:"type,omitempty"`
+	Source string                 `json:"source,omitempty"`
+	Data   map[string]interface{} `json:"data,omitempty"`
+	// For events that don't have a "type" field but have other fields directly
+	// (e.g., step_type, step_name from NL2SQL)
+	StepType string `json:"step_type,omitempty"`
+	StepName string `json:"step_name,omitempty"`
+	// Raw JSON data for flexible parsing
+	RawData json.RawMessage `json:"-"`
 }
