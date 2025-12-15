@@ -246,3 +246,38 @@ func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequ
 		StatusCode: resp.StatusCode,
 	}, nil
 }
+
+// CancelAnalyze cancels an ongoing data analysis request.
+//
+// This method sends a POST request to /byoa/api/v1/data_asking/cancel to cancel
+// a data analysis request that is currently in progress.
+//
+// The request_id parameter identifies the analysis request to cancel. Only the
+// user who initiated the request can cancel it.
+//
+// Example:
+//
+//	resp, err := client.CancelAnalyze(ctx, &sdk.CancelAnalyzeRequest{
+//		RequestID: "request-123",
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Cancelled request: %s, Status: %s\n", resp.RequestID, resp.Status)
+func (c *RawClient) CancelAnalyze(ctx context.Context, req *CancelAnalyzeRequest, opts ...CallOption) (*CancelAnalyzeResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if strings.TrimSpace(req.RequestID) == "" {
+		return nil, fmt.Errorf("request_id cannot be empty")
+	}
+
+	// Add request_id as query parameter
+	opts = append(opts, WithQueryParam("request_id", req.RequestID))
+
+	var resp CancelAnalyzeResponse
+	if err := c.postJSON(ctx, "/byoa/api/v1/data_asking/cancel", nil, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

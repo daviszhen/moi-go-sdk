@@ -1828,6 +1828,19 @@ type DataAnalysisStreamEvent struct {
 	RawData json.RawMessage `json:"-"`
 }
 
+// CancelAnalyzeRequest represents a request to cancel a data analysis request.
+type CancelAnalyzeRequest struct {
+	RequestID string `json:"request_id"` // Required: The request ID of the analysis to cancel
+}
+
+// CancelAnalyzeResponse represents the response from canceling a data analysis request.
+type CancelAnalyzeResponse struct {
+	RequestID string `json:"request_id"` // The request ID that was cancelled
+	Status    string `json:"status"`     // Status after cancellation (typically "cancelled")
+	UserID    string `json:"user_id"`    // User ID who cancelled the request
+	UserName  string `json:"user_name"`  // User name who cancelled the request
+}
+
 // ============ Handler: Task types ============
 
 type TaskID int64

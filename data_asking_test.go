@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -233,4 +234,96 @@ func TestAnalyzeDataStream_SimpleRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, event)
 	t.Logf("First event: Type=%s, Source=%s", event.Type, event.Source)
+}
+
+// ============ Cancel Analyze Tests ============
+
+func TestCancelAnalyze_NilRequest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	resp, err := client.CancelAnalyze(ctx, nil)
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
+
+func TestCancelAnalyze_EmptyRequestID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := &RawClient{}
+
+	req := &CancelAnalyzeRequest{
+		RequestID: "",
+	}
+	resp, err := client.CancelAnalyze(ctx, req)
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request_id cannot be empty")
+}
+
+// TestCancelAnalyzeLiveFlow tests the cancel analyze API with a real backend.
+// This test requires:
+// 1. A running backend server
+// 2. A valid request_id from a previous analysis request
+func TestCancelAnalyzeLiveFlow(t *testing.T) {
+	// Skip if not running live tests
+	if testing.Short() {
+		t.Skip("Skipping live test in short mode")
+	}
+
+	ctx := context.Background()
+	client := newTestClient(t)
+
+	// First, start an analysis request to get a request_id
+	req := &DataAnalysisRequest{
+		Question: "平均薪资是多少？",
+		Config: &DataAnalysisConfig{
+			DataCategory: "admin",
+			DataSource: &DataSource{
+				Type: "all",
+			},
+		},
+	}
+
+	stream, err := client.AnalyzeDataStream(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, stream)
+	defer stream.Close()
+
+	// Read the first event to get request_id
+	event, err := stream.ReadEvent()
+	require.NoError(t, err)
+	require.NotNil(t, event)
+
+	// Extract request_id from the init event
+	var requestID string
+	if event.StepType == "init" {
+		// Parse the data field to get request_id
+		var initData map[string]interface{}
+		if err := json.Unmarshal(event.RawData, &initData); err == nil {
+			if data, ok := initData["data"].(map[string]interface{}); ok {
+				if id, ok := data["request_id"].(string); ok {
+					requestID = id
+				}
+			}
+		}
+	}
+
+	if requestID == "" {
+		t.Skip("Could not extract request_id from stream, skipping cancel test")
+	}
+
+	// Now cancel the request
+	cancelReq := &CancelAnalyzeRequest{
+		RequestID: requestID,
+	}
+
+	cancelResp, err := client.CancelAnalyze(ctx, cancelReq)
+	require.NoError(t, err)
+	require.NotNil(t, cancelResp)
+	require.Equal(t, requestID, cancelResp.RequestID)
+	require.Equal(t, "cancelled", cancelResp.Status)
+	require.NotEmpty(t, cancelResp.UserID)
+	t.Logf("Successfully cancelled request: %s, Status: %s, UserID: %s", cancelResp.RequestID, cancelResp.Status, cancelResp.UserID)
 }
