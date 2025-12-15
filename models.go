@@ -1738,6 +1738,14 @@ type LLMModifySessionMessageResponseResponse struct {
 	ModifiedResponse string `json:"modified_response"`
 }
 
+// LLMAppendSessionMessageModifiedResponseResponse represents a response from appending to a session message's modified response.
+type LLMAppendSessionMessageModifiedResponseResponse struct {
+	Message       string `json:"message"`
+	SessionID     int64  `json:"session_id"`
+	MessageID     int64  `json:"message_id"`
+	AppendContent string `json:"append_content"`
+}
+
 // ============ Handler: Data Asking types ============
 
 // DataAskingTableConfig represents table configuration for NL2SQL in data asking context.

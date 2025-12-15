@@ -454,6 +454,110 @@ func (c *RawClient) ModifyLLMSessionMessageResponse(ctx context.Context, session
 	return &respBody, nil
 }
 
+// AppendLLMSessionMessageModifiedResponse appends content to the modified_response field of a message in a session.
+//
+// The request body is sent as plain text (not JSON), containing the content to append.
+// The content will be appended to the existing modified_response field.
+//
+// Example:
+//
+//	resp, err := client.AppendLLMSessionMessageModifiedResponse(ctx, 1, 10, "Additional content to append")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Appended content to message ID: %d\n", resp.MessageID)
+func (c *RawClient) AppendLLMSessionMessageModifiedResponse(ctx context.Context, sessionID int64, messageID int64, appendContent string, opts ...CallOption) (*LLMAppendSessionMessageModifiedResponseResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("sdk client is nil")
+	}
+	callOpts := newCallOptions(opts...)
+
+	// Determine base URL and path
+	var baseURL string
+	var fullPath string
+
+	if callOpts.useDirectLLMProxy && c.llmProxyBaseURL != "" {
+		// Direct connection to LLM Proxy (no prefix)
+		baseURL = c.llmProxyBaseURL
+		fullPath = ensureLeadingSlash(fmt.Sprintf("/api/sessions/%d/messages/%d/append-modified-response", sessionID, messageID))
+	} else {
+		// Default: through MOI SDK gateway with /llm-proxy prefix
+		baseURL = c.baseURL
+		fullPath = "/llm-proxy" + ensureLeadingSlash(fmt.Sprintf("/api/sessions/%d/messages/%d/append-modified-response", sessionID, messageID))
+	}
+
+	// Build full URL
+	fullURL := baseURL + fullPath
+	if len(callOpts.query) > 0 {
+		delimiter := "?"
+		if strings.Contains(fullURL, "?") {
+			delimiter = "&"
+		}
+		fullURL = fullURL + delimiter + callOpts.query.Encode()
+	}
+
+	// Create request with plain text body
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, strings.NewReader(appendContent))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set(headerAPIKey, c.apiKey)
+	if c.userAgent != "" {
+		req.Header.Set(headerUserAgent, c.userAgent)
+	}
+	mergeHeaders(req.Header, c.defaultHeaders, false)
+	if callOpts.requestID != "" {
+		req.Header.Set(headerRequestID, callOpts.requestID)
+	}
+	mergeHeaders(req.Header, callOpts.headers, true)
+	req.Header.Set(headerAccept, mimeJSON)
+	req.Header.Set(headerContentType, "text/plain")
+
+	// Execute request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	// Check for error response format
+	if resp.StatusCode >= http.StatusBadRequest {
+		var errResp struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(data, &errResp); err == nil && errResp.Error.Message != "" {
+			return nil, &APIError{
+				Code:       errResp.Error.Code,
+				Message:    errResp.Error.Message,
+				HTTPStatus: resp.StatusCode,
+			}
+		}
+		// If not in error format, return HTTP error
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: data}
+	}
+
+	// Parse successful response
+	var respBody LLMAppendSessionMessageModifiedResponseResponse
+	if len(data) > 0 && string(data) != "null" {
+		if err := json.Unmarshal(data, &respBody); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return &respBody, nil
+}
+
 // ============ Chat Message Management APIs ============
 
 // CreateLLMChatMessage creates a new chat message record.
