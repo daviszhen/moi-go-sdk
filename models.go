@@ -50,6 +50,48 @@ type FullPath struct {
 	NameList []string `json:"name_list"`
 }
 
+// ============ Models: File types ============
+
+// FileType represents the type of a file in the system.
+type FileType int
+
+const (
+	FileTypeUnknown  FileType = 0
+	FileTypeTXT      FileType = 1
+	FileTypePDF      FileType = 2
+	FileTypePPT      FileType = 4
+	FileTypeDOC      FileType = 5
+	FileTypeMarkdown FileType = 6
+	FileTypeCSV      FileType = 7
+	FileTypeParquet  FileType = 8
+	FileTypeSQLFiles FileType = 9
+	FileTypeDir      FileType = 10
+	FileTypeDOCX     FileType = 11
+	FileTypePPTX     FileType = 12
+	FileTypeWAV      FileType = 13
+	FileTypeMP3      FileType = 14
+	FileTypeAAC      FileType = 15
+	FileTypeFLAC     FileType = 16
+	FileTypeMP4      FileType = 17
+	FileTypeMOV      FileType = 18
+	FileTypeMKV      FileType = 19
+	FileTypePNG      FileType = 20
+	FileTypeJPG      FileType = 21
+	FileTypeJPEG     FileType = 22
+	FileTypeBMP      FileType = 23
+	FileTypeXLS      FileType = 24
+	FileTypeXLSX     FileType = 25
+	FileTypeHTM      FileType = 27
+	FileTypeHTML     FileType = 28
+	FileTypeEML      FileType = 29
+	FileTypeMSG      FileType = 30
+	FileTypeP7S      FileType = 31
+	FileTypeDWG      FileType = 32
+	FileTypeDXF      FileType = 33
+	FileTypeFAS      FileType = 34
+	FileTypeIMAGE    FileType = 3
+)
+
 // ============ Models: Priv types ============
 
 const (
@@ -1467,6 +1509,138 @@ type GenAIGetJobDetailResponse struct {
 
 type GenAIDownloadFileResultRequest struct {
 	FileID string `uri:"file_id"`
+}
+
+// ============ Handler: Workflow types ============
+
+// ProcessMode represents the processing mode for workflows.
+// It describes the processing rhythm of a workflow.
+type ProcessMode struct {
+	Interval int `json:"interval"` // Processing interval in seconds
+	Offset   int `json:"offset"`   // Processing offset in seconds
+}
+
+// WorkflowJobStatus represents the status of a workflow job.
+type WorkflowJobStatus int
+
+const (
+	WorkflowJobStatusUnknown   WorkflowJobStatus = 0 // Unknown status
+	WorkflowJobStatusRunning   WorkflowJobStatus = 1 // Job is running
+	WorkflowJobStatusCompleted WorkflowJobStatus = 2 // Job completed successfully
+	WorkflowJobStatusFailed    WorkflowJobStatus = 3 // Job failed
+)
+
+// String returns the string representation of the workflow job status.
+func (s WorkflowJobStatus) String() string {
+	switch s {
+	case WorkflowJobStatusRunning:
+		return "running"
+	case WorkflowJobStatusCompleted:
+		return "completed"
+	case WorkflowJobStatusFailed:
+		return "failed"
+	case WorkflowJobStatusUnknown:
+		return "unknown"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(s))
+	}
+}
+
+// WorkflowMetadata represents workflow metadata for creating a workflow.
+// This is used by the CreateWorkflow API endpoint.
+type WorkflowMetadata struct {
+	Name                   string           `json:"name,omitempty"`
+	SourceVolumeNames      []string         `json:"source_volume_names"`          // Required: must be present even if empty
+	SourceVolumeIDs        []string         `json:"source_volume_ids"`            // Required: must be present even if empty
+	TargetVolumeName       string           `json:"target_volume_name,omitempty"` // deprecated at moi 3.2.4
+	TargetVolumeID         string           `json:"target_volume_id,omitempty"`
+	CreateTargetVolumeName string           `json:"create_target_volume_name,omitempty"`
+	ProcessMode            *ProcessMode     `json:"process_mode"` // Required: must be present even if empty
+	FileTypes              []int            `json:"file_types,omitempty"`
+	Workflow               *CatalogWorkflow `json:"workflow,omitempty"`
+}
+
+// CatalogWorkflow represents a workflow definition with nodes and connections.
+type CatalogWorkflow struct {
+	Nodes       []CatalogWorkflowNode       `json:"node"`
+	Connections []CatalogWorkflowConnection `json:"connections"`
+}
+
+// CatalogWorkflowNode represents a workflow node definition.
+type CatalogWorkflowNode struct {
+	ID             string                            `json:"id"`
+	Type           string                            `json:"type"`
+	InitParameters map[string]map[string]interface{} `json:"init_parameters"` // Required: must be present, use empty map {} if no parameters
+}
+
+// CatalogWorkflowConnection represents a workflow connection definition.
+type CatalogWorkflowConnection struct {
+	Sender       string `json:"sender"`
+	Receiver     string `json:"receiver"`                // Note: JSON may use "reciever" instead of "receiver" (typo)
+	SenderPort   string `json:"sender_port,omitempty"`   // Optional port for sender component
+	ReceiverPort string `json:"receiver_port,omitempty"` // Optional port for receiver component
+}
+
+// WorkflowCreateResponse represents the response from creating a workflow.
+type WorkflowCreateResponse struct {
+	CreatedAt         string `json:"created_at"`
+	Creator           string `json:"creator"`
+	Content           string `json:"content"`
+	UpdatedAt         string `json:"updated_at"`
+	Modifier          string `json:"modifier"`
+	ID                string `json:"id"`
+	FileTypes         string `json:"file_types"`
+	Name              string `json:"name"`
+	SourceVolumeIDs   string `json:"source_volume_ids"`
+	UserID            string `json:"user_id"`
+	SourceVolumeNames string `json:"source_volume_names"`
+	GroupID           string `json:"group_id"`
+	TargetVolumeID    string `json:"target_volume_id"`
+	Version           string `json:"version"`
+	FlowInterval      int    `json:"flow_interval"`
+	TargetVolumeName  string `json:"target_volume_name"`
+	Priority          int    `json:"priority"`
+	FlowOffset        int    `json:"flow_offset"`
+	Files             string `json:"files"`
+}
+
+// WorkflowJobListRequest represents a request to list workflow jobs.
+type WorkflowJobListRequest struct {
+	WorkflowID   string `json:"workflow_id,omitempty"`    // Filter by workflow ID
+	SourceFileID string `json:"source_file_id,omitempty"` // Filter by source file ID
+	Status       string `json:"status,omitempty"`         // Filter by job status
+	Page         int    `json:"page,omitempty"`           // Page number (starts from 1, default 1)
+	PageSize     int    `json:"page_size,omitempty"`      // Page size (default 20)
+}
+
+// WorkflowJob represents a workflow job in the list.
+// This matches the API response structure from /byoa/api/v1/workflow_job
+type WorkflowJob struct {
+	JobID        string            `json:"id"`                       // Job ID (API returns "id")
+	WorkflowID   string            `json:"workflow_id"`              // Workflow ID
+	SourceFileID string            `json:"source_file_id,omitempty"` // Source file ID (not in API response, populated from query param)
+	Status       WorkflowJobStatus `json:"status"`                   // Job status (API returns number: 1=running, 2=completed, 3=failed)
+	StartTime    string            `json:"start_time"`               // Job start time
+	EndTime      string            `json:"end_time"`                 // Job end time (null if not finished)
+	// Note: API does not return created_at or updated_at fields
+}
+
+// workflowJobRaw represents the raw API response structure for a workflow job.
+// This is used internally for unmarshaling, then converted to WorkflowJob.
+type workflowJobRaw struct {
+	ID          string                 `json:"id"`
+	WorkflowID  string                 `json:"workflow_id"`
+	Status      int                    `json:"status"`
+	StartTime   string                 `json:"start_time"`
+	EndTime     *string                `json:"end_time"`              // Can be null
+	Description map[string]interface{} `json:"description,omitempty"` // May contain triggerTaskID
+}
+
+// WorkflowJobListResponse represents the response from listing workflow jobs.
+// This matches the API response structure: {"code":"ok","msg":"ok","data":{"total":1,"jobs":[...]}}
+type WorkflowJobListResponse struct {
+	Jobs  []WorkflowJob `json:"jobs"`  // List of workflow jobs (API returns "jobs" not "list")
+	Total int           `json:"total"` // Total number of jobs
 }
 
 // ============ Handler: NL2SQL types ============

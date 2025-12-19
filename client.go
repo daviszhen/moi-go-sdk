@@ -170,7 +170,9 @@ func (c *RawClient) doJSON(ctx context.Context, method, path string, body interf
 		return fmt.Errorf("decode response: %w", err)
 	}
 
-	if envelope.Code != "" && envelope.Code != "OK" {
+	// Check for error code (case-insensitive comparison)
+	// Some services return "ok" (lowercase) while others return "OK" (uppercase)
+	if envelope.Code != "" && strings.ToUpper(envelope.Code) != "OK" {
 		return &APIError{
 			Code:       envelope.Code,
 			Message:    envelope.Msg,

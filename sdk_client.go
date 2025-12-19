@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SDKClient is a high-level client that provides convenient business-oriented APIs.
@@ -665,4 +666,255 @@ func (c *SDKClient) RunSQL(ctx context.Context, statement string, opts ...CallOp
 		Operation: RunSQL,
 		Statement: statement,
 	}, opts...)
+}
+
+// CreateDocumentProcessingWorkflow creates a workflow for processing documents from a source volume to a target volume.
+//
+// This is a high-level convenience method that creates a complete document processing pipeline
+// with the following nodes:
+//   - RootNode: Reads files from the source volume
+//   - DocumentParseNode: Parses various document formats
+//   - ChunkNode: Splits documents into chunks
+//   - EmbedNode: Generates embeddings for document chunks
+//   - WriteNode: Writes processed results to the target volume
+//
+// The workflow is configured to trigger automatically when files are loaded into the source volume
+// (ProcessMode.Interval = -1).
+//
+// Supported file types:
+//   - Text files: TXT (1), Markdown (6), HTM (27), HTML (28)
+//   - Office documents: PDF (2), PPT (4), DOCX (11), PPTX (12), XLS (24), XLSX (25)
+//   - Spreadsheets: CSV (7)
+//
+// Parameters:
+//   - targetVolumeID: the target volume ID where processed results will be written (required)
+//   - sourceVolumeID: the source volume ID where source documents are located (required)
+//   - workflowName: the name of the workflow (required)
+//
+// Returns:
+//   - workflowID: the ID of the created workflow
+//   - error: any error that occurred
+//
+// Example:
+//
+//	workflowID, err := sdkClient.CreateDocumentProcessingWorkflow(ctx, "target-vol-123", "source-vol-456", "My Workflow")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Created workflow: %s\n", workflowID)
+func (c *SDKClient) CreateDocumentProcessingWorkflow(ctx context.Context, workflowName string, sourceVolumeID VolumeID, targetVolumeID VolumeID, opts ...CallOption) (workflowID string, err error) {
+	if strings.TrimSpace(string(targetVolumeID)) == "" {
+		return "", fmt.Errorf("target_volume_id is required")
+	}
+	if strings.TrimSpace(string(sourceVolumeID)) == "" {
+		return "", fmt.Errorf("source_volume_id is required")
+	}
+	if strings.TrimSpace(workflowName) == "" {
+		return "", fmt.Errorf("workflow_name is required")
+	}
+
+	// Build the workflow metadata with a complete document processing pipeline
+	req := &WorkflowMetadata{
+		Name:            workflowName,
+		SourceVolumeIDs: []string{string(sourceVolumeID)},
+		TargetVolumeID:  string(targetVolumeID),
+		// Supported file types: TXT, PDF, PPT, DOCX, Markdown, PPTX, CSV, XLS, XLSX, HTM, HTML
+		FileTypes: []int{
+			int(FileTypeTXT), int(FileTypePDF), int(FileTypePPT), int(FileTypeDOCX),
+			int(FileTypeMarkdown), int(FileTypePPTX), int(FileTypeCSV),
+			int(FileTypeXLS), int(FileTypeXLSX), int(FileTypeHTM), int(FileTypeHTML),
+		},
+		// ProcessMode with Interval = -1 means trigger on file load
+		ProcessMode: &ProcessMode{
+			Interval: -1, // -1 means trigger on file load
+			Offset:   0,
+		},
+		// Complete document processing pipeline
+		Workflow: &CatalogWorkflow{
+			Nodes: []CatalogWorkflowNode{
+				{
+					ID:             "RootNode_1",
+					Type:           "RootNode",
+					InitParameters: map[string]map[string]interface{}{},
+				},
+				{
+					ID:             "DocumentParseNode_2",
+					Type:           "DocumentParseNode",
+					InitParameters: map[string]map[string]interface{}{},
+				},
+				{
+					ID:             "ChunkNode_4",
+					Type:           "ChunkNode",
+					InitParameters: map[string]map[string]interface{}{},
+				},
+				{
+					ID:             "EmbedNode_5",
+					Type:           "EmbedNode",
+					InitParameters: map[string]map[string]interface{}{},
+				},
+				{
+					ID:             "WriteNode_6",
+					Type:           "WriteNode",
+					InitParameters: map[string]map[string]interface{}{},
+				},
+			},
+			Connections: []CatalogWorkflowConnection{
+				{
+					Sender:   "RootNode_1",
+					Receiver: "DocumentParseNode_2",
+				},
+				{
+					Sender:   "DocumentParseNode_2",
+					Receiver: "ChunkNode_4",
+				},
+				{
+					Sender:   "ChunkNode_4",
+					Receiver: "EmbedNode_5",
+				},
+				{
+					Sender:   "EmbedNode_5",
+					Receiver: "WriteNode_6",
+				},
+			},
+		},
+	}
+
+	resp, err := c.raw.CreateWorkflow(ctx, req, opts...)
+	if err != nil {
+		return "", fmt.Errorf("failed to create workflow: %w", err)
+	}
+
+	if resp == nil || resp.ID == "" {
+		return "", fmt.Errorf("workflow created but ID is empty")
+	}
+
+	return resp.ID, nil
+}
+
+// GetWorkflowJob retrieves a single workflow job by workflow ID and source file ID.
+//
+// This is a high-level convenience method that queries workflow jobs using ListWorkflowJobs
+// with filters for workflow ID and source file ID, then returns the first matching job.
+//
+// Parameters:
+//   - workflowID: the workflow ID (required)
+//   - sourceFileID: the source file ID (required)
+//
+// Returns:
+//   - *WorkflowJob: the matching workflow job, or nil if not found
+//   - error: any error that occurred, including when no job is found
+//
+// Example:
+//
+//	job, err := sdkClient.GetWorkflowJob(ctx, "workflow-123", "file-456")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Job ID: %s, Status: %s\n", job.JobID, job.Status)
+func (c *SDKClient) GetWorkflowJob(ctx context.Context, workflowID string, sourceFileID string, opts ...CallOption) (*WorkflowJob, error) {
+	if strings.TrimSpace(workflowID) == "" {
+		return nil, fmt.Errorf("workflow_id is required")
+	}
+	if strings.TrimSpace(sourceFileID) == "" {
+		return nil, fmt.Errorf("source_file_id is required")
+	}
+
+	// Query jobs with both filters
+	resp, err := c.raw.ListWorkflowJobs(ctx, &WorkflowJobListRequest{
+		WorkflowID:   workflowID,
+		SourceFileID: sourceFileID,
+		Page:         1,
+		PageSize:     1, // We only need one result
+	}, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflow jobs: %w", err)
+	}
+
+	if resp == nil || len(resp.Jobs) == 0 {
+		return nil, fmt.Errorf("workflow job not found for workflow_id=%s, source_file_id=%s", workflowID, sourceFileID)
+	}
+
+	// Return the first matching job
+	return &resp.Jobs[0], nil
+}
+
+// WaitForWorkflowJob polls for a workflow job until it is found or the context times out.
+//
+// This method continuously queries for a workflow job matching the given workflow ID and source file ID
+// until either:
+//   - The job is found (returns the job immediately)
+//   - The context is cancelled or times out (returns an error)
+//
+// The polling interval and timeout are controlled by the provided context. If the context has a deadline,
+// the method will respect it. If no deadline is set, a default timeout of 60 seconds will be used.
+//
+// Parameters:
+//   - ctx: context with optional timeout/deadline. If no deadline is set, defaults to 60 seconds.
+//   - workflowID: the workflow ID (required)
+//   - sourceFileID: the source file ID (required)
+//   - pollInterval: the interval between polling attempts (default: 2 seconds if <= 0)
+//
+// Returns:
+//   - *WorkflowJob: the matching workflow job
+//   - error: any error that occurred, including context timeout or job not found
+//
+// Example:
+//
+//	// With explicit timeout
+//	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//	defer cancel()
+//	job, err := sdkClient.WaitForWorkflowJob(ctx, "workflow-123", "file-456", 2*time.Second)
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("Job found: %s, Status: %d\n", job.JobID, job.Status)
+func (c *SDKClient) WaitForWorkflowJob(ctx context.Context, workflowID string, sourceFileID string, pollInterval time.Duration) (*WorkflowJob, error) {
+	if strings.TrimSpace(workflowID) == "" {
+		return nil, fmt.Errorf("workflow_id is required")
+	}
+	if strings.TrimSpace(sourceFileID) == "" {
+		return nil, fmt.Errorf("source_file_id is required")
+	}
+
+	// Set default poll interval if not provided
+	if pollInterval <= 0 {
+		pollInterval = 2 * time.Second
+	}
+
+	// Ensure context has a deadline (default: 60 seconds)
+	ctxWithDeadline := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctxWithDeadline, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
+
+	// Poll for the job
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	// Try once immediately
+	job, err := c.GetWorkflowJob(ctxWithDeadline, workflowID, sourceFileID)
+	if err == nil && job != nil {
+		return job, nil
+	}
+
+	// Poll until found or context expires
+	for {
+		select {
+		case <-ctxWithDeadline.Done():
+			// Context expired or cancelled
+			if ctxWithDeadline.Err() == context.DeadlineExceeded {
+				return nil, fmt.Errorf("workflow job not found within timeout for workflow_id=%s, source_file_id=%s: %w", workflowID, sourceFileID, ctxWithDeadline.Err())
+			}
+			return nil, fmt.Errorf("context cancelled while waiting for workflow job: %w", ctxWithDeadline.Err())
+		case <-ticker.C:
+			// Poll again
+			job, err := c.GetWorkflowJob(ctxWithDeadline, workflowID, sourceFileID)
+			if err == nil && job != nil {
+				return job, nil
+			}
+			// Continue polling on error (job not found yet)
+		}
+	}
 }
