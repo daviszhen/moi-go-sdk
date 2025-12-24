@@ -1988,17 +1988,17 @@ type LLMAppendSessionMessageModifiedResponseResponse struct {
 // DataAskingTableConfig represents table configuration for NL2SQL in data asking context.
 // This is different from the TableConfig used in table operations.
 type DataAskingTableConfig struct {
-	Type      string   `json:"type"` // "all", "none", "specified"
-	DbName    *string  `json:"db_name,omitempty"`
-	TableList []string `json:"table_list,omitempty"`
+	Type       string   `json:"type"`                  // "all", "none", "specified"
+	DbName     string   `json:"db_name"`               // Required: database name
+	DatabaseID *int     `json:"database_id,omitempty"` // Database ID, used when type is "all"
+	TableList  []string `json:"table_list,omitempty"`  // Table name list, used when type is "specified"
 }
 
 // FileConfig represents file configuration for RAG.
 type FileConfig struct {
-	Type             string   `json:"type"` // "all", "none", "specified"
-	TargetVolumeName *string  `json:"target_volume_name,omitempty"`
-	TargetVolumeID   *string  `json:"target_volume_id,omitempty"`
-	FileIDList       []string `json:"file_id_list,omitempty"`
+	Type       string   `json:"type"`                   // "all", "none", "specified"
+	DatabaseID *int     `json:"database_id,omitempty"`  // Database ID, used when type is "all"
+	FileIDList []string `json:"file_id_list,omitempty"` // File ID list, used when type is "specified"
 }
 
 // FilterConditions represents filter conditions.
@@ -2029,7 +2029,9 @@ type DataSource struct {
 
 // DataAnalysisConfig represents data analysis configuration.
 type DataAnalysisConfig struct {
-	DataCategory     string            `json:"data_category"` // "admin", "common"
+	MCPServerURL     *string           `json:"mcp_server_url,omitempty"`   // MCP server URL
+	DataObjectType   string            `json:"data_object_type,omitempty"` // "default", "audit_related" (default: "default")
+	DataCategory     string            `json:"data_category,omitempty"`    // "admin", "common" (default: "admin")
 	FilterConditions *FilterConditions `json:"filter_conditions,omitempty"`
 	DataSource       *DataSource       `json:"data_source,omitempty"`
 	DataScope        *DataScope        `json:"data_scope,omitempty"`
@@ -2053,16 +2055,75 @@ type QuestionType struct {
 
 // DataAnalysisStreamEvent represents a single event in the SSE stream.
 // The actual structure depends on the event type.
+//
+// Common event formats:
+//   - init event: step_type="init", data contains request_id and session_title
+//   - classification event: type="classification"
+//   - events with step_type field: StepType field contains the step type (e.g., "init", "sql_generated")
+//   - events with source field: Source field indicates the source (e.g., "rag", "nl2sql")
 type DataAnalysisStreamEvent struct {
 	Type   string                 `json:"type,omitempty"`
 	Source string                 `json:"source,omitempty"`
 	Data   map[string]interface{} `json:"data,omitempty"`
 	// For events that don't have a "type" field but have other fields directly
-	// (e.g., step_type, step_name from NL2SQL)
+	// (e.g., step_type, step_name from NL2SQL, or step_type="init" for initialization)
 	StepType string `json:"step_type,omitempty"`
 	StepName string `json:"step_name,omitempty"`
 	// Raw JSON data for flexible parsing
 	RawData json.RawMessage `json:"-"`
+}
+
+// InitEventData represents the data field in an init event.
+type InitEventData struct {
+	RequestID    string `json:"request_id"`
+	SessionTitle string `json:"session_title"`
+}
+
+// GetInitEventData extracts request_id and session_title from an init event.
+// Returns nil if the event is not an init event or if the data cannot be parsed.
+//
+// Example:
+//
+//	event, err := stream.ReadEvent()
+//	if err != nil {
+//		return err
+//	}
+//	if event.StepType == "init" {
+//		initData := event.GetInitEventData()
+//		if initData != nil {
+//			fmt.Printf("Request ID: %s, Session Title: %s\n", initData.RequestID, initData.SessionTitle)
+//		}
+//	}
+func (e *DataAnalysisStreamEvent) GetInitEventData() *InitEventData {
+	if e.StepType != "init" {
+		return nil
+	}
+
+	// Try to extract from Data field first
+	if e.Data != nil {
+		requestID, _ := e.Data["request_id"].(string)
+		sessionTitle, _ := e.Data["session_title"].(string)
+		if requestID != "" {
+			return &InitEventData{
+				RequestID:    requestID,
+				SessionTitle: sessionTitle,
+			}
+		}
+	}
+
+	// Try to parse from RawData
+	if len(e.RawData) > 0 {
+		var eventData struct {
+			Data InitEventData `json:"data"`
+		}
+		if err := json.Unmarshal(e.RawData, &eventData); err == nil {
+			if eventData.Data.RequestID != "" {
+				return &eventData.Data
+			}
+		}
+	}
+
+	return nil
 }
 
 // CancelAnalyzeRequest represents a request to cancel a data analysis request.

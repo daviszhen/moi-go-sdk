@@ -136,6 +136,8 @@ func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
 // returns a stream of Server-Sent Events (SSE) containing analysis results.
 //
 // The stream includes events such as:
+//   - init: Initialization event (first event) with request_id and session_title
+//     (step_type="init", data contains request_id and session_title)
 //   - classification: Question classification result
 //   - decomposition: Attribution question decomposition (attribution only)
 //   - step_start: Step start (attribution only)
@@ -263,7 +265,7 @@ func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequ
 //	if err != nil {
 //		return err
 //	}
-//	fmt.Printf("Cancelled request: %s, Status: %s\n", resp.RequestID, resp.Status)
+//	fmt.Printf("Cancelled request: %s, Status: %s, User: %s\n", resp.RequestID, resp.Status, resp.UserName)
 func (c *RawClient) CancelAnalyze(ctx context.Context, req *CancelAnalyzeRequest, opts ...CallOption) (*CancelAnalyzeResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
