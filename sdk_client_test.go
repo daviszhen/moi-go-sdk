@@ -701,3 +701,115 @@ More content here for testing purposes.
 		// We don't fail the test if job is still running, as processing time can vary
 	}
 }
+
+func TestFindFilesByName_WithImportLocalFileToVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	rawClient := newTestClient(t)
+	client := NewSDKClient(rawClient)
+
+	// Step 1: Create test catalog, database, and volume
+	catalogID, markCatalogDeleted := createTestCatalog(t, rawClient)
+	databaseID, markDatabaseDeleted := createTestDatabase(t, rawClient, catalogID)
+	volumeID, markVolumeDeleted := createTestVolume(t, rawClient, databaseID)
+
+	defer func() {
+		markVolumeDeleted()
+		markDatabaseDeleted()
+		markCatalogDeleted()
+	}()
+
+	// Step 2: Create a temporary test file with a specific name
+	tmpDir := t.TempDir()
+	// Use the same file name format as in the user's example (without extension in search)
+	localFileName := "许继电气：关于召开2.txt"
+	searchFileName := "许继电气：关于召开2" // Search without extension, matching user's example
+	filePath := filepath.Join(tmpDir, localFileName)
+	testContent := "This is a test file for FindFilesByName integration test"
+	err := os.WriteFile(filePath, []byte(testContent), 0644)
+	require.NoError(t, err, "Failed to create temporary test file")
+
+	// Ensure file exists
+	_, err = os.Stat(filePath)
+	require.NoError(t, err, "Temporary file should exist")
+
+	// Step 3: Upload the file to volume using ImportLocalFileToVolume
+	// Use the full filename with extension for upload
+	uploadResp, err := client.ImportLocalFileToVolume(ctx, filePath, volumeID, FileMeta{
+		Filename: localFileName,
+		Path:     localFileName,
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, uploadResp)
+	require.NotEmpty(t, uploadResp.FileID)
+	t.Logf("Uploaded file with ID: %s, TaskId: %d", uploadResp.FileID, uploadResp.TaskId)
+
+	// Step 4: Wait a bit for the file to be processed and indexed
+	// The file might need some time to be available in the file list
+	// We'll retry the search a few times with a short delay
+	var foundFiles *FileListResponse
+	maxRetries := 10
+	retryDelay := 1 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		// Step 5: Search for the file using FindFilesByName
+		// Use the search file name (without extension) as in the user's example
+		foundFiles, err = client.FindFilesByName(ctx, searchFileName, volumeID)
+		if err == nil && foundFiles != nil && foundFiles.Total > 0 {
+			t.Logf("Found file after %d retries", i+1)
+			break
+		}
+		if i < maxRetries-1 {
+			t.Logf("File not found yet, retrying in %v (attempt %d/%d)...", retryDelay, i+1, maxRetries)
+			time.Sleep(retryDelay)
+		}
+	}
+
+	// Step 6: Verify the search results
+	require.NoError(t, err, "FindFilesByName should not return an error")
+	require.NotNil(t, foundFiles, "FindFilesByName should return a response")
+	require.Greater(t, foundFiles.Total, 0, "Should find at least one file with the given name")
+	require.Greater(t, len(foundFiles.List), 0, "List should contain at least one file")
+
+	// Verify that the found file matches the uploaded file
+	found := false
+	for _, file := range foundFiles.List {
+		// The file name might be with or without extension, so check both
+		if file.Name == localFileName || file.Name == searchFileName || file.Name == "许继电气：关于召开2" {
+			found = true
+			t.Logf("Found matching file: ID=%s, Name=%s, FileType=%s", file.ID, file.Name, file.FileType)
+			require.Equal(t, string(volumeID), file.VolumeID, "Volume ID should match")
+			break
+		}
+	}
+	require.True(t, found, "Should find a file matching the uploaded file name")
+
+	t.Logf("Successfully found %d file(s) with search name '%s'", foundFiles.Total, searchFileName)
+}
+
+func TestFindFilesByName_EmptyFileName(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rawClient := &RawClient{}
+	client := NewSDKClient(rawClient)
+
+	resp, err := client.FindFilesByName(ctx, "", VolumeID("test-volume-id"))
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "file_name is required")
+}
+
+func TestFindFilesByName_EmptyVolumeID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rawClient := &RawClient{}
+	client := NewSDKClient(rawClient)
+
+	resp, err := client.FindFilesByName(ctx, "test-file.txt", VolumeID(""))
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "volume_id is required")
+}

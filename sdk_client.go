@@ -918,3 +918,68 @@ func (c *SDKClient) WaitForWorkflowJob(ctx context.Context, workflowID string, s
 		}
 	}
 }
+
+// FindFilesByName searches for files by name within a specific volume.
+//
+// This is a high-level convenience method that uses ListFiles with filters
+// to find files matching the given file name in the specified volume.
+// The search is performed in the root directory (parent_id is empty).
+//
+// Parameters:
+//   - ctx: context for the request
+//   - fileName: the file name to search for (required)
+//   - volumeID: the volume ID to search within (required)
+//   - opts: optional call options
+//
+// Returns:
+//   - *FileListResponse: the response containing matching files
+//   - error: any error that occurred
+//
+// Example:
+//
+//	resp, err := sdkClient.FindFilesByName(ctx, "许继电气：关于召开2", "019b39fc-f4ee-7915-b701-66ae6a48d9fc")
+//	if err != nil {
+//		return err
+//	}
+//	for _, file := range resp.List {
+//		fmt.Printf("Found file: %s (ID: %s)\n", file.Name, file.ID)
+//	}
+func (c *SDKClient) FindFilesByName(ctx context.Context, fileName string, volumeID VolumeID, opts ...CallOption) (*FileListResponse, error) {
+	if strings.TrimSpace(fileName) == "" {
+		return nil, fmt.Errorf("file_name is required")
+	}
+	if volumeID == "" {
+		return nil, fmt.Errorf("volume_id is required")
+	}
+
+	// Build the request with filters matching the provided JSON example
+	req := &FileListRequest{
+		CommonCondition: CommonCondition{
+			Page:     1,
+			PageSize: 10,
+			Order:    "desc",
+			OrderBy:  "",
+			Filters: []CommonFilter{
+				{
+					Name:   "volume_id",
+					Values: []string{string(volumeID)},
+					Fuzzy:  false,
+				},
+				{
+					Name:   "parent_id",
+					Values: []string{""},
+					Fuzzy:  false,
+				},
+				{
+					Name:   "file_name",
+					Values: []string{fileName},
+					Fuzzy:  false,
+				},
+			},
+		},
+		Keyword: "",
+	}
+
+	// Call the raw client's ListFiles method
+	return c.raw.ListFiles(ctx, req, opts...)
+}
