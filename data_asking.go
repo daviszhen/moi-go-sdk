@@ -14,7 +14,7 @@ import (
 // DataAnalysisStream wraps a streaming HTTP response for data analysis API.
 //
 // The stream returns Server-Sent Events (SSE) format. Use ReadEvent to read
-// individual events from the stream as raw data.
+// individual events from the stream.
 //
 // Example:
 //
@@ -28,14 +28,14 @@ import (
 //	defer stream.Close()
 //
 //	for {
-//		data, err := stream.ReadEvent()
+//		event, err := stream.ReadEvent()
 //		if err == io.EOF {
 //			break
 //		}
 //		if err != nil {
 //			return err
 //		}
-//		fmt.Printf("Raw event data: %s\n", data)
+//		fmt.Printf("Event type: %s\n", event.Type)
 //	}
 type DataAnalysisStream struct {
 	// Body is the response body that must be closed by the caller
@@ -55,57 +55,79 @@ func (s *DataAnalysisStream) Close() error {
 	return s.Body.Close()
 }
 
-// ReadEvent reads the next SSE event from the stream and returns raw data.
+// ReadEvent reads the next SSE event from the stream.
 //
 // Returns io.EOF when the stream is complete.
 //
 // Example:
 //
 //	for {
-//		data, err := stream.ReadEvent()
+//		event, err := stream.ReadEvent()
 //		if err == io.EOF {
 //			break
 //		}
 //		if err != nil {
 //			return err
 //		}
-//		// Process raw data
-//		fmt.Println(data)
+//		// Process event
 //	}
-func (s *DataAnalysisStream) ReadEvent() (string, error) {
+func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
 	if s.scanner == nil {
 		s.scanner = bufio.NewScanner(s.Body)
 	}
 
-	var allLines []string
+	var event DataAnalysisStreamEvent
+	var dataLines []string
+	var eventType string
 
 	for s.scanner.Scan() {
 		line := s.scanner.Text()
 		if line == "" {
 			// Empty line indicates end of event
-			if len(allLines) > 0 {
-				// Return all lines as raw data
-				dataStr := strings.Join(allLines, "\n")
-				return dataStr, nil
+			if len(dataLines) > 0 {
+				// Parse the accumulated data
+				dataStr := strings.Join(dataLines, "\n")
+				event.RawData = []byte(dataStr)
+				if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
+					// If JSON parsing fails, return raw data
+					return &event, nil
+				}
+				if eventType != "" {
+					event.Type = eventType
+				}
+				return &event, nil
 			}
 			continue
 		}
 
-		// Collect all SSE fields without filtering
-		allLines = append(allLines, line)
+		// Parse SSE format: "field: value"
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			dataLines = append(dataLines, data)
+		} else if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+		}
+		// Ignore other SSE fields (id, retry, etc.)
 	}
 
 	if err := s.scanner.Err(); err != nil {
-		return "", fmt.Errorf("read stream: %w", err)
+		return nil, fmt.Errorf("read stream: %w", err)
 	}
 
 	// Handle last event if any
-	if len(allLines) > 0 {
-		dataStr := strings.Join(allLines, "\n")
-		return dataStr, nil
+	if len(dataLines) > 0 {
+		dataStr := strings.Join(dataLines, "\n")
+		event.RawData = []byte(dataStr)
+		if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
+			return &event, nil
+		}
+		if eventType != "" {
+			event.Type = eventType
+		}
+		return &event, nil
 	}
 
-	return "", io.EOF
+	return nil, io.EOF
 }
 
 // AnalyzeDataStream performs data analysis and returns a streaming response.
@@ -143,14 +165,14 @@ func (s *DataAnalysisStream) ReadEvent() (string, error) {
 //	defer stream.Close()
 //
 //	for {
-//		data, err := stream.ReadEvent()
+//		event, err := stream.ReadEvent()
 //		if err == io.EOF {
 //			break
 //		}
 //		if err != nil {
 //			return err
 //		}
-//		fmt.Printf("Raw event data: %s\n", data)
+//		fmt.Printf("Event: %+v\n", event)
 //	}
 func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequest, opts ...CallOption) (*DataAnalysisStream, error) {
 	if req == nil {

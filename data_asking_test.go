@@ -121,7 +121,7 @@ func TestAnalyzeDataStreamLiveFlow(t *testing.T) {
 			break
 		}
 
-		data, err := stream.ReadEvent()
+		event, err := stream.ReadEvent()
 		if err == io.EOF {
 			t.Logf("Stream ended after %d events", eventCount)
 			break
@@ -141,55 +141,45 @@ func TestAnalyzeDataStreamLiveFlow(t *testing.T) {
 			require.NoError(t, err, "Error reading event")
 		}
 
-		require.NotEmpty(t, data, "Event data should not be empty")
+		require.NotNil(t, event, "Event should not be nil")
 
 		eventCount++
 
 		// Log event details (truncate long data for readability)
-		rawDataStr := data
+		rawDataStr := string(event.RawData)
 		if len(rawDataStr) > 200 {
 			rawDataStr = rawDataStr[:200] + "..."
 		}
-		t.Logf("Event #%d: RawData: %s", eventCount, rawDataStr)
+		t.Logf("Event #%d: Type=%s, Source=%s, StepType=%s, StepName=%s",
+			eventCount, event.Type, event.Source, event.StepType, event.StepName)
+		t.Logf("  RawData: %s", rawDataStr)
 
-		// Try to parse JSON to check for specific event types
-		var eventData map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &eventData); err == nil {
-			// Check for type field
-			if eventType, ok := eventData["type"].(string); ok {
-				if eventType == "classification" {
-					hasClassification = true
-					require.NotEmpty(t, data, "Classification event should have data")
-				}
-				if eventType == "complete" {
-					hasComplete = true
-					t.Logf("Analysis completed")
-					readEvents = false
-					break // Complete event indicates end of stream
-				}
-				if eventType == "error" {
-					t.Logf("Error event received: %s", data)
-				}
+		// Track specific event types
+		if event.Type == "classification" {
+			hasClassification = true
+			// Verify classification event structure
+			require.NotEmpty(t, event.RawData, "Classification event should have data")
+		}
+
+		if event.Type == "complete" {
+			hasComplete = true
+			t.Logf("Analysis completed")
+			readEvents = false
+			break // Complete event indicates end of stream
+		}
+
+		if event.Type == "error" {
+			t.Logf("Error event received: %s", string(event.RawData))
+		}
+
+		// For events without explicit type field, check for source and step_type
+		if event.Type == "" {
+			if event.Source != "" {
+				t.Logf("Event with source %s: step_type=%s, step_name=%s", event.Source, event.StepType, event.StepName)
 			}
-			// Check for step_type field
-			if stepType, ok := eventData["step_type"].(string); ok {
-				if stepType == "init" {
-					t.Logf("Init event received")
-				}
-			}
-		} else {
-			// If not JSON, check if it contains SSE fields
-			if strings.Contains(data, "event: classification") {
-				hasClassification = true
-			}
-			if strings.Contains(data, "event: complete") {
-				hasComplete = true
-				t.Logf("Analysis completed")
-				readEvents = false
-				break
-			}
-			if strings.Contains(data, "event: error") {
-				t.Logf("Error event received: %s", data)
+			// Some events have step_type in the JSON but not parsed into Type field
+			if event.StepType != "" {
+				t.Logf("Event with step_type: %s", event.StepType)
 			}
 		}
 
@@ -236,14 +226,14 @@ func TestAnalyzeDataStream_SimpleRequest(t *testing.T) {
 	defer stream.Close()
 
 	// Read at least one event to verify the stream works
-	data, err := stream.ReadEvent()
+	event, err := stream.ReadEvent()
 	if err == io.EOF {
 		t.Log("Stream ended immediately (no events)")
 		return
 	}
 	require.NoError(t, err)
-	require.NotEmpty(t, data)
-	t.Logf("First event data: %s", data)
+	require.NotNil(t, event)
+	t.Logf("First event: Type=%s, Source=%s", event.Type, event.Source)
 }
 
 // ============ Cancel Analyze Tests ============
@@ -302,40 +292,19 @@ func TestCancelAnalyzeLiveFlow(t *testing.T) {
 	defer stream.Close()
 
 	// Read the first event to get request_id
-	data, err := stream.ReadEvent()
+	event, err := stream.ReadEvent()
 	require.NoError(t, err)
-	require.NotEmpty(t, data)
+	require.NotNil(t, event)
 
 	// Extract request_id from the init event
 	var requestID string
-	// Try to parse as JSON first
-	var eventData map[string]interface{}
-	if err := json.Unmarshal([]byte(data), &eventData); err == nil {
-		// Check for step_type="init" or type="init"
-		if stepType, ok := eventData["step_type"].(string); ok && stepType == "init" {
-			if dataField, ok := eventData["data"].(map[string]interface{}); ok {
-				if id, ok := dataField["request_id"].(string); ok {
+	if event.StepType == "init" {
+		// Parse the data field to get request_id
+		var initData map[string]interface{}
+		if err := json.Unmarshal(event.RawData, &initData); err == nil {
+			if data, ok := initData["data"].(map[string]interface{}); ok {
+				if id, ok := data["request_id"].(string); ok {
 					requestID = id
-				}
-			}
-		}
-	} else {
-		// If not JSON, check for SSE format with init event
-		if strings.Contains(data, "step_type") && strings.Contains(data, "init") {
-			// Try to extract from SSE format
-			lines := strings.Split(data, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "data: ") {
-					dataLine := strings.TrimPrefix(line, "data: ")
-					var initData map[string]interface{}
-					if err := json.Unmarshal([]byte(dataLine), &initData); err == nil {
-						if dataField, ok := initData["data"].(map[string]interface{}); ok {
-							if id, ok := dataField["request_id"].(string); ok {
-								requestID = id
-								break
-							}
-						}
-					}
 				}
 			}
 		}
