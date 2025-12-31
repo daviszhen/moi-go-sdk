@@ -54,6 +54,39 @@ func (c *RawClient) GetTable(ctx context.Context, req *TableInfoRequest, opts ..
 	return &resp, nil
 }
 
+// GetTable retrieves detailed information about the specified table.
+//
+// The response includes table schema, properties, and metadata.
+//
+// Example:
+//
+//	resp, err := client.GetMultiTable(ctx, &sdk.MultiTableInfoRequest{
+//		TableList: []TableInfoRequest{
+//			{
+//				TableID: 456,  //如果是普通表，传table_id
+//			},
+//			{
+//				DatabaseID: 123, //如果是订阅表，传database_id 和 table_name
+//				TableName:  "sub_table",
+//				TableID:    TableIDInSubDatabase, //订阅表的table_id是一个特殊值
+//			},
+//		},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Printf("SubTable: %s\n", resp.InfoMap["123 sub_table"].TableName)
+func (c *RawClient) GetMultiTable(ctx context.Context, req *MultiTableInfoRequest, opts ...CallOption) (*MultiTableInfoResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	var resp MultiTableInfoResponse
+	if err := c.postJSON(ctx, "/catalog/table/multi_info", req, &resp, opts...); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // GetTableOverview retrieves an overview of all tables.
 //
 // Returns a summary list of tables with basic information.

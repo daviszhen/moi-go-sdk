@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -44,6 +45,15 @@ func TestTableLiveFlow(t *testing.T) {
 	infoResp, err := client.GetTable(ctx, &TableInfoRequest{TableID: tableID})
 	require.NoError(t, err)
 	require.Equal(t, tableName, infoResp.Name)
+
+	multiInfoResp, err := client.GetMultiTable(ctx, &MultiTableInfoRequest{
+		TableList: []TableInfoRequest{
+			{TableID: tableID},
+		},
+	})
+	require.NoError(t, err)
+	key := fmt.Sprintf("%d %s", databaseID, tableName)
+	require.Equal(t, tableName, multiInfoResp.InfoMap[key].Name)
 
 	exists, err := client.CheckTableExists(ctx, &TableExistRequest{
 		DatabaseID: databaseID,
@@ -99,6 +109,7 @@ func TestTableNilRequestErrors(t *testing.T) {
 	}{
 		{"Create", func() error { _, err := client.CreateTable(ctx, nil); return err }},
 		{"Info", func() error { _, err := client.GetTable(ctx, nil); return err }},
+		{"MultiInfo", func() error { _, err := client.GetMultiTable(ctx, nil); return err }},
 		{"Exist", func() error { _, err := client.CheckTableExists(ctx, nil); return err }},
 		{"Preview", func() error { _, err := client.PreviewTable(ctx, nil); return err }},
 		{"Load", func() error { _, err := client.LoadTable(ctx, nil); return err }},
@@ -187,6 +198,15 @@ func TestTableIDNotExists(t *testing.T) {
 	_, err := client.GetTable(ctx, &TableInfoRequest{TableID: nonExistentID})
 	require.Error(t, err)
 	t.Logf("Expected error for non-existent table ID: %v", err)
+
+	// Try to get non-existent table in batch
+	resp, err := client.GetMultiTable(ctx, &MultiTableInfoRequest{
+		TableList: []TableInfoRequest{
+			{TableID: nonExistentID},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, len(resp.InfoMap))
 
 	// Try to preview non-existent table - may not error if service allows empty preview
 	_, err = client.PreviewTable(ctx, &TablePreviewRequest{TableID: nonExistentID, Lines: 5})

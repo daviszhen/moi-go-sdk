@@ -45,6 +45,8 @@ const CatalogIDNotFound = int64(9223372036854775807)  // math.MaxInt64
 const RoleIDNotFound = uint(4294967295)               // math.MaxUint
 const UserIDNotFound UserID = 4294967295              // math.MaxUint
 
+var TableIDInSubDatabase TableID = -1 //订阅库下的表都没有表id,用一个特殊值
+
 type FullPath struct {
 	IDList   []string `json:"id_list"`
 	NameList []string `json:"name_list"`
@@ -852,7 +854,10 @@ type TableCreateResponse struct {
 }
 
 type TableInfoRequest struct {
-	TableID TableID `json:"id"`
+	TableID TableID `json:"id" binding:"required"`
+	//如果是订阅表，那么TableID传-1，这个时候要根据库id和表名来获取信息。
+	TableName  string     `json:"table_name"`
+	DatabaseID DatabaseID `json:"database_id"`
 }
 
 type TableInfoResponse struct {
@@ -865,6 +870,17 @@ type TableInfoResponse struct {
 	CreatedAt string        `json:"created_at"`
 	CreatedBy string        `json:"created_by"`
 	Comment   string        `json:"comment"`
+}
+
+type MultiTableInfoRequest struct {
+	TableList []TableInfoRequest `json:"table_list" binding:"required"`
+}
+
+type MultiTableInfoResponse struct {
+	//key = fmt.Sprintf("%d %s", database_id, table_name)
+	// 因为如果是订阅表会没有table_id，所以没法拿table_id做key
+	// 而发送方一定是可以拿到 database_id和table_name 的
+	InfoMap map[string]TableInfoResponse `json:"info_map" binding:"required"`
 }
 
 type TableOverview struct {
