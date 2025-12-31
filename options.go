@@ -311,17 +311,19 @@ func WithDirectLLMProxy() CallOption {
 	}
 }
 
-// WithStreamBufferSize sets the buffer size for stream scanner to handle large tokens.
+// WithStreamBufferSize sets the initial buffer size for stream reader.
 //
-// The default buffer size for bufio.Scanner is 64KB. If your SSE stream contains
-// data lines larger than this, you need to increase the buffer size using this option.
+// The buffer will dynamically grow as needed to handle lines of arbitrary length,
+// so this option only sets the initial buffer size for better performance.
+// If not set, the default initial buffer size is 4KB.
 //
-// The size is specified in bytes. A common value is 1MB (1024 * 1024) or larger.
+// The size is specified in bytes. A larger initial buffer can improve performance
+// for streams with consistently large lines, but is not required for correctness.
 //
 // Example:
 //
 //	stream, err := client.AnalyzeDataStream(ctx, req,
-//		sdk.WithStreamBufferSize(1024*1024)) // 1MB buffer
+//		sdk.WithStreamBufferSize(64*1024)) // 64KB initial buffer
 func WithStreamBufferSize(size int) CallOption {
 	return func(co *callOptions) {
 		if size > 0 {

@@ -44,9 +44,10 @@ type DataAnalysisStream struct {
 	Header http.Header
 	// StatusCode is the HTTP status code
 	StatusCode int
-	scanner    *bufio.Scanner
-	// maxBufferSize is the maximum buffer size for the scanner (0 means use default 1MB)
-	maxBufferSize int
+	reader     *bufio.Reader
+	// initialBufferSize is the initial buffer size for the reader (0 means use default)
+	// The buffer will dynamically grow as needed to handle large lines
+	initialBufferSize int
 }
 
 // Close releases the underlying HTTP response body.
@@ -73,25 +74,76 @@ func (s *DataAnalysisStream) Close() error {
 //		}
 //		// Process event
 //	}
-func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
-	if s.scanner == nil {
-		s.scanner = bufio.NewScanner(s.Body)
-		// Set buffer size to handle large tokens (default is 64KB)
-		// Use configured size or default to 1MB
-		maxCapacity := s.maxBufferSize
-		if maxCapacity == 0 {
-			maxCapacity = 1024 * 1024 // Default: 1MB
+//
+// readLine reads a line from the reader, dynamically growing the buffer as needed.
+// This allows handling lines of arbitrary length without token size limits.
+func (s *DataAnalysisStream) readLine() (string, error) {
+	if s.reader == nil {
+		bufferSize := s.initialBufferSize
+		if bufferSize == 0 {
+			bufferSize = 4096 // Default: 4KB initial buffer
 		}
-		buf := make([]byte, 0, bufio.MaxScanTokenSize)
-		s.scanner.Buffer(buf, maxCapacity)
+		s.reader = bufio.NewReaderSize(s.Body, bufferSize)
 	}
 
+	var line []byte
+	var isPrefix bool
+	var err error
+
+	// ReadLine may return a partial line if it's too long for the buffer.
+	// We need to keep reading until we get the complete line.
+	for {
+		var part []byte
+		part, isPrefix, err = s.reader.ReadLine()
+		if err != nil {
+			if err == io.EOF && len(line) > 0 {
+				// EOF but we have data, return it
+				return string(line), nil
+			}
+			return "", err
+		}
+
+		line = append(line, part...)
+		if !isPrefix {
+			// Complete line read
+			break
+		}
+		// Line was too long, continue reading
+	}
+
+	return string(line), nil
+}
+
+func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
 	var event DataAnalysisStreamEvent
 	var dataLines []string
 	var eventType string
 
-	for s.scanner.Scan() {
-		line := s.scanner.Text()
+	for {
+		line, err := s.readLine()
+		if err != nil {
+			if err == io.EOF {
+				// Handle last event if any
+				if len(dataLines) > 0 {
+					dataStr := strings.Join(dataLines, "\n")
+					event.RawData = []byte(dataStr)
+					if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
+						// If JSON parsing fails, return raw data
+						if eventType != "" {
+							event.Type = eventType
+						}
+						return &event, nil
+					}
+					if eventType != "" {
+						event.Type = eventType
+					}
+					return &event, nil
+				}
+				return nil, io.EOF
+			}
+			return nil, fmt.Errorf("read stream: %w", err)
+		}
+
 		if line == "" {
 			// Empty line indicates end of event
 			if len(dataLines) > 0 {
@@ -100,6 +152,9 @@ func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
 				event.RawData = []byte(dataStr)
 				if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
 					// If JSON parsing fails, return raw data
+					if eventType != "" {
+						event.Type = eventType
+					}
 					return &event, nil
 				}
 				if eventType != "" {
@@ -119,25 +174,6 @@ func (s *DataAnalysisStream) ReadEvent() (*DataAnalysisStreamEvent, error) {
 		}
 		// Ignore other SSE fields (id, retry, etc.)
 	}
-
-	if err := s.scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read stream: %w", err)
-	}
-
-	// Handle last event if any
-	if len(dataLines) > 0 {
-		dataStr := strings.Join(dataLines, "\n")
-		event.RawData = []byte(dataStr)
-		if err := json.Unmarshal([]byte(dataStr), &event); err != nil {
-			return &event, nil
-		}
-		if eventType != "" {
-			event.Type = eventType
-		}
-		return &event, nil
-	}
-
-	return nil, io.EOF
 }
 
 // AnalyzeDataStream performs data analysis and returns a streaming response.
@@ -253,10 +289,10 @@ func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequ
 	}
 
 	return &DataAnalysisStream{
-		Body:          resp.Body,
-		Header:        resp.Header.Clone(),
-		StatusCode:    resp.StatusCode,
-		maxBufferSize: callOpts.streamBufferSize,
+		Body:              resp.Body,
+		Header:            resp.Header.Clone(),
+		StatusCode:        resp.StatusCode,
+		initialBufferSize: callOpts.streamBufferSize,
 	}, nil
 }
 

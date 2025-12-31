@@ -340,7 +340,7 @@ func TestDataAnalysisStream_ReadEvent_Basic(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0, // Use default
+		initialBufferSize: 0, // Use default
 	}
 
 	event, err := stream.ReadEvent()
@@ -368,7 +368,7 @@ func TestDataAnalysisStream_ReadEvent_MultipleEvents(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	// Read first event
@@ -405,7 +405,7 @@ func TestDataAnalysisStream_ReadEvent_MultiLineData(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	event, err := stream.ReadEvent()
@@ -426,7 +426,7 @@ func TestDataAnalysisStream_ReadEvent_EmptyStream(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader("")),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	event, err := stream.ReadEvent()
@@ -439,7 +439,7 @@ func TestDataAnalysisStream_ReadEvent_EmptyStream(t *testing.T) {
 func TestDataAnalysisStream_ReadEvent_DefaultBufferSize(t *testing.T) {
 	t.Parallel()
 
-	// Create data larger than 64KB (default bufio.Scanner limit) but less than 1MB
+	// Create data larger than default buffer - should automatically grow
 	largeData := strings.Repeat("x", 100*1024) // 100KB
 	// Use JSON encoding to properly escape the data
 	jsonData, err := json.Marshal(map[string]string{"data": largeData})
@@ -450,11 +450,11 @@ func TestDataAnalysisStream_ReadEvent_DefaultBufferSize(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0, // Use default 1MB
+		initialBufferSize: 0, // Use default 4KB initial buffer (will grow automatically)
 	}
 
 	event, err := stream.ReadEvent()
-	require.NoError(t, err, "Should handle large data with default buffer size")
+	require.NoError(t, err, "Should handle large data with dynamic buffer growth")
 	require.NotNil(t, event)
 	require.Equal(t, "large", event.Type)
 	require.Contains(t, string(event.RawData), largeData)
@@ -465,7 +465,7 @@ func TestDataAnalysisStream_ReadEvent_DefaultBufferSize(t *testing.T) {
 func TestDataAnalysisStream_ReadEvent_CustomBufferSize(t *testing.T) {
 	t.Parallel()
 
-	// Create data larger than 64KB
+	// Create data larger than initial buffer - should automatically grow
 	largeData := strings.Repeat("y", 200*1024) // 200KB
 	// Use JSON encoding to properly escape the data
 	jsonData, err := json.Marshal(map[string]string{"data": largeData})
@@ -476,11 +476,11 @@ func TestDataAnalysisStream_ReadEvent_CustomBufferSize(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 512 * 1024, // 512KB custom buffer
+		initialBufferSize: 512 * 1024, // 512KB initial buffer (will grow as needed)
 	}
 
 	event, err := stream.ReadEvent()
-	require.NoError(t, err, "Should handle large data with custom buffer size")
+	require.NoError(t, err, "Should handle large data with dynamic buffer growth")
 	require.NotNil(t, event)
 	require.Equal(t, "large", event.Type)
 	require.Contains(t, string(event.RawData), largeData)
@@ -491,7 +491,7 @@ func TestDataAnalysisStream_ReadEvent_CustomBufferSize(t *testing.T) {
 func TestDataAnalysisStream_ReadEvent_VeryLargeData(t *testing.T) {
 	t.Parallel()
 
-	// Create data larger than 1MB to test custom buffer size
+	// Create very large data - buffer should automatically grow to handle it
 	largeData := strings.Repeat("z", 2*1024*1024) // 2MB
 	// Use JSON encoding to properly escape the data
 	jsonData, err := json.Marshal(map[string]string{"data": largeData})
@@ -502,11 +502,11 @@ func TestDataAnalysisStream_ReadEvent_VeryLargeData(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 4 * 1024 * 1024, // 4MB custom buffer
+		initialBufferSize: 4 * 1024 * 1024, // 4MB initial buffer (will grow as needed)
 	}
 
 	event, err := stream.ReadEvent()
-	require.NoError(t, err, "Should handle very large data with custom buffer size")
+	require.NoError(t, err, "Should handle very large data with dynamic buffer growth")
 	require.NotNil(t, event)
 	require.Equal(t, "verylarge", event.Type)
 	require.Contains(t, string(event.RawData), largeData)
@@ -524,7 +524,7 @@ func TestDataAnalysisStream_ReadEvent_InvalidJSON(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	event, err := stream.ReadEvent()
@@ -546,7 +546,7 @@ func TestDataAnalysisStream_ReadEvent_NoEventType(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	event, err := stream.ReadEvent()
@@ -563,23 +563,23 @@ func TestDataAnalysisStream_ReadEvent_WithStreamBufferSizeOption(t *testing.T) {
 	t.Parallel()
 
 	// This test verifies that WithStreamBufferSize option is properly passed through
-	// We'll create a mock client and verify the option is set
+	// The buffer will automatically grow to handle data larger than initial size
 	largeData := strings.Repeat("a", 150*1024) // 150KB
 	// Use JSON encoding to properly escape the data
 	jsonData, err := json.Marshal(map[string]string{"data": largeData})
 	require.NoError(t, err)
 	sseData := "event: test\ndata: " + string(jsonData) + "\n\n"
 
-	// Create stream with custom buffer size (simulating what AnalyzeDataStream would do)
+	// Create stream with custom initial buffer size (simulating what AnalyzeDataStream would do)
 	stream := &DataAnalysisStream{
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 256 * 1024, // 256KB (set via WithStreamBufferSize)
+		initialBufferSize: 256 * 1024, // 256KB initial buffer (set via WithStreamBufferSize, will grow as needed)
 	}
 
 	event, err := stream.ReadEvent()
-	require.NoError(t, err, "Should handle data with custom buffer size from option")
+	require.NoError(t, err, "Should handle data with dynamic buffer growth from option")
 	require.NotNil(t, event)
 	require.Equal(t, "test", event.Type)
 
@@ -596,7 +596,7 @@ func TestDataAnalysisStream_ReadEvent_EmptyLines(t *testing.T) {
 		Body:          io.NopCloser(strings.NewReader(sseData)),
 		Header:        make(http.Header),
 		StatusCode:    200,
-		maxBufferSize: 0,
+		initialBufferSize: 0,
 	}
 
 	event, err := stream.ReadEvent()
