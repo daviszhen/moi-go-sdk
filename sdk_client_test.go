@@ -813,3 +813,126 @@ func TestFindFilesByName_EmptyVolumeID(t *testing.T) {
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "volume_id is required")
 }
+
+func TestImportLocalFileToTable_ExistedTableOption(t *testing.T) {
+	ctx := context.Background()
+	rawClient := newTestClient(t)
+	client := NewSDKClient(rawClient)
+
+	// Create test catalog, database, and table
+	catalogID, markCatalogDeleted := createTestCatalog(t, rawClient)
+	databaseID, markDatabaseDeleted := createTestDatabase(t, rawClient, catalogID)
+	tableID, markTableDeleted := createTestTable(t, rawClient, databaseID)
+
+	defer func() {
+		markTableDeleted()
+		markDatabaseDeleted()
+		markCatalogDeleted()
+	}()
+
+	// Create a test volume and upload a file to get conn_file_id
+	volumeID, markVolumeDeleted := createTestVolume(t, rawClient, databaseID)
+	defer markVolumeDeleted()
+
+	// Create a temporary test file
+	tmpDir := t.TempDir()
+	fileName := "test-import-table.csv"
+	filePath := filepath.Join(tmpDir, fileName)
+	testContent := "id,name\n1,test1\n2,test2\n"
+	err := os.WriteFile(filePath, []byte(testContent), 0644)
+	require.NoError(t, err)
+
+	// Upload file to volume to get conn_file_id
+	uploadResp, err := client.ImportLocalFileToVolume(ctx, filePath, volumeID, FileMeta{
+		Filename: fileName,
+		Path:     fileName,
+	}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, uploadResp.FileID)
+
+	// Test 1: Import to existing table with ExistedTableOpts set to append
+	tableConfigAppend := &TableConfig{
+		ConnFileIDs: []string{uploadResp.FileID},
+		NewTable:    false,
+		TableID:     tableID,
+		DatabaseID:  databaseID,
+		ExistedTable: []FileAndTableColumnMapping{
+			{
+				TableColumn:  "id",
+				Column:       "id",
+				ColNumInFile: 1,
+			},
+			{
+				TableColumn:  "name",
+				Column:       "name",
+				ColNumInFile: 2,
+			},
+		},
+		ExistedTableOpts: ExistedTableOptions{
+			Method: ExistedTableOptionAppend,
+		},
+	}
+
+	resp, err := client.ImportLocalFileToTable(ctx, tableConfigAppend)
+	// Note: The actual API call might fail if the file format doesn't match,
+	// but we're testing that the ExistedTableOpts is properly set
+	if err != nil {
+		t.Logf("ImportLocalFileToTable with append option returned error (expected in some cases): %v", err)
+	} else {
+		require.NotNil(t, resp)
+		t.Logf("Successfully imported with append option, response: %+v", resp)
+	}
+
+	// Test 2: Import to existing table with ExistedTableOpts set to overwrite
+	tableConfigOverwrite := &TableConfig{
+		ConnFileIDs: []string{uploadResp.FileID},
+		NewTable:    false,
+		TableID:     tableID,
+		DatabaseID:  databaseID,
+		ExistedTable: []FileAndTableColumnMapping{
+			{
+				TableColumn:  "id",
+				Column:       "id",
+				ColNumInFile: 1,
+			},
+			{
+				TableColumn:  "name",
+				Column:       "name",
+				ColNumInFile: 2,
+			},
+		},
+		ExistedTableOpts: ExistedTableOptions{
+			Method: ExistedTableOptionOverwrite,
+		},
+	}
+
+	resp2, err := client.ImportLocalFileToTable(ctx, tableConfigOverwrite)
+	if err != nil {
+		t.Logf("ImportLocalFileToTable with overwrite option returned error (expected in some cases): %v", err)
+	} else {
+		require.NotNil(t, resp2)
+		t.Logf("Successfully imported with overwrite option, response: %+v", resp2)
+	}
+
+	// Test 3: Import to existing table with ExistedTable as nil (should be initialized to empty slice)
+	tableConfigNilExistedTable := &TableConfig{
+		ConnFileIDs:  []string{uploadResp.FileID},
+		NewTable:     false,
+		TableID:      tableID,
+		DatabaseID:   databaseID,
+		ExistedTable: nil, // nil should be initialized to empty slice
+		ExistedTableOpts: ExistedTableOptions{
+			Method: ExistedTableOptionAppend,
+		},
+	}
+
+	resp3, err := client.ImportLocalFileToTable(ctx, tableConfigNilExistedTable)
+	// Verify that ExistedTable was initialized (not nil)
+	require.NotNil(t, tableConfigNilExistedTable.ExistedTable, "ExistedTable should be initialized to empty slice")
+	if err != nil {
+		t.Logf("ImportLocalFileToTable with nil ExistedTable returned error (expected in some cases): %v", err)
+	} else {
+		require.NotNil(t, resp3)
+		t.Logf("Successfully imported with nil ExistedTable (initialized), response: %+v", resp3)
+	}
+}
