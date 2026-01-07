@@ -80,6 +80,15 @@ type FileAndTableColumnMapping struct {
 	ColNumInFile int32 `json:"col_num_in_file"`
 }
 
+type ExistedTableOpts struct {
+	// Method means overwrite the table by new data or append new data to the table
+	// options:
+	// 	"append"
+	// 	"overwrite"
+	// 	"" same as "append"
+	Method string `json:"method"`
+}
+
 // TableConfig represents table configuration for file upload.
 type TableConfig struct {
 	CreateTable   *CreateTableConfig `json:"create_table"`
@@ -101,6 +110,8 @@ type TableConfig struct {
 	// ExistedTable is the mapping between file columns and table columns.
 	// Used when importing to an existing table (new_table = false).
 	ExistedTable []FileAndTableColumnMapping `json:"existed_table,omitempty"`
+	// ExistedTableOpts denotes the choice when import data into the existed table
+	ExistedTableOpts ExistedTableOpts `json:"existed_table_opts,omitempty"`
 }
 
 // CreateTableConfig represents the table creation configuration.
