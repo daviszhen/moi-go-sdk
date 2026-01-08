@@ -743,18 +743,23 @@ func (c *SDKClient) CreateDocumentProcessingWorkflow(ctx context.Context, workfl
 					InitParameters: map[string]map[string]interface{}{},
 				},
 				{
-					ID:             "CleanerNode_3",
-					Type:           "CleanerNodeV2",
-					InitParameters: map[string]map[string]interface{}{},
-				},
-				{
-					ID:             "ChunkNode_4",
-					Type:           "ChunkNodeV2",
-					InitParameters: map[string]map[string]interface{}{},
+					ID:   "ChunkNode_4",
+					Type: "ChunkNode",
+					InitParameters: map[string]map[string]interface{}{
+						"DocumentSplitter": {
+							"enable_level_based_split": true,
+						},
+						"DocumentSplitter-ImageOCR": {
+							"enable_level_based_split": true,
+						},
+						"DocumentSplitter-ImageCaption": {
+							"enable_level_based_split": true,
+						},
+					},
 				},
 				{
 					ID:             "EmbedNode_5",
-					Type:           "EmbeddingNodeV2",
+					Type:           "EmbedNode",
 					InitParameters: map[string]map[string]interface{}{},
 				},
 				{
@@ -770,10 +775,6 @@ func (c *SDKClient) CreateDocumentProcessingWorkflow(ctx context.Context, workfl
 				},
 				{
 					Sender:   "DocumentParseNode_2",
-					Receiver: "CleanerNode_3",
-				},
-				{
-					Sender:   "CleanerNode_3",
 					Receiver: "ChunkNode_4",
 				},
 				{
