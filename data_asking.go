@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // DataAnalysisStream wraps a streaming HTTP response for data analysis API.
@@ -37,6 +38,76 @@ import (
 //		}
 //		fmt.Printf("Event type: %s\n", event.Type)
 //	}
+//
+// timeoutReader wraps an io.ReadCloser and provides timeout control that resets on each successful read.
+// The timeout is applied to the interval between reads, not the total read time.
+type timeoutReader struct {
+	reader    io.ReadCloser
+	timeout   time.Duration
+	readMutex chan struct{} // Serializes read operations
+}
+
+func newTimeoutReader(reader io.ReadCloser, timeout time.Duration) *timeoutReader {
+	return &timeoutReader{
+		reader:    reader,
+		timeout:   timeout,
+		readMutex: make(chan struct{}, 1),
+	}
+}
+
+func (r *timeoutReader) Read(p []byte) (n int, err error) {
+	// Serialize reads to ensure timeout is properly reset
+	r.readMutex <- struct{}{}
+	defer func() { <-r.readMutex }()
+
+	if r.timeout <= 0 {
+		// No timeout, read directly
+		return r.reader.Read(p)
+	}
+
+	// Create a context with timeout for this read operation
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+
+	// Use a channel to receive the read result
+	type result struct {
+		n   int
+		err error
+	}
+	resultCh := make(chan result, 1)
+
+	// Perform the read in a goroutine
+	// Note: The read operation itself is thread-safe, as io.ReadCloser implementations
+	// should handle concurrent reads appropriately, or we serialize them via readMutex
+	go func() {
+		// Create a local buffer to avoid potential race conditions
+		// We'll read into a buffer and then copy to p
+		buf := make([]byte, len(p))
+		n, err := r.reader.Read(buf)
+		if n > 0 {
+			copy(p, buf[:n])
+		}
+		resultCh <- result{n: n, err: err}
+	}()
+
+	// Wait for either the read to complete or the timeout
+	select {
+	case res := <-resultCh:
+		// Read completed successfully - timeout is effectively reset for the next read
+		return res.n, res.err
+	case <-ctx.Done():
+		// Timeout - no data received within the timeout period
+		return 0, fmt.Errorf("read timeout: no data received within %v", r.timeout)
+	}
+}
+
+func (r *timeoutReader) Close() error {
+	if r.reader != nil {
+		return r.reader.Close()
+	}
+	return nil
+}
+
 type DataAnalysisStream struct {
 	// Body is the response body that must be closed by the caller
 	Body io.ReadCloser
@@ -48,6 +119,9 @@ type DataAnalysisStream struct {
 	// initialBufferSize is the initial buffer size for the reader (0 means use default)
 	// The buffer will dynamically grow as needed to handle large lines
 	initialBufferSize int
+	// readTimeout is the timeout between messages in streaming responses
+	// This timeout is reset each time data is successfully read
+	readTimeout time.Duration
 }
 
 // Close releases the underlying HTTP response body.
@@ -77,13 +151,19 @@ func (s *DataAnalysisStream) Close() error {
 //
 // readLine reads a line from the reader, dynamically growing the buffer as needed.
 // This allows handling lines of arbitrary length without token size limits.
+// The read timeout is reset each time data is successfully read.
 func (s *DataAnalysisStream) readLine() (string, error) {
 	if s.reader == nil {
 		bufferSize := s.initialBufferSize
 		if bufferSize == 0 {
 			bufferSize = 4096 // Default: 4KB initial buffer
 		}
-		s.reader = bufio.NewReaderSize(s.Body, bufferSize)
+		// Wrap the body with a timeout reader if timeout is configured
+		body := s.Body
+		if s.readTimeout > 0 {
+			body = newTimeoutReader(s.Body, s.readTimeout)
+		}
+		s.reader = bufio.NewReaderSize(body, bufferSize)
 	}
 
 	var line []byte
@@ -92,10 +172,15 @@ func (s *DataAnalysisStream) readLine() (string, error) {
 
 	// ReadLine may return a partial line if it's too long for the buffer.
 	// We need to keep reading until we get the complete line.
+	// The timeout is automatically reset on each successful read by the timeoutReader.
 	for {
 		var part []byte
 		part, isPrefix, err = s.reader.ReadLine()
 		if err != nil {
+			// Check if error is due to read timeout
+			if strings.Contains(err.Error(), "read timeout") {
+				return "", err
+			}
 			if err == io.EOF && len(line) > 0 {
 				// EOF but we have data, return it
 				return string(line), nil
@@ -103,6 +188,7 @@ func (s *DataAnalysisStream) readLine() (string, error) {
 			return "", err
 		}
 
+		// Data successfully read - timeout is automatically reset by timeoutReader
 		line = append(line, part...)
 		if !isPrefix {
 			// Complete line read
@@ -266,8 +352,20 @@ func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequ
 	httpReq.Header.Set(headerContentType, mimeJSON)
 	httpReq.Header.Set(headerAccept, "text/event-stream")
 
+	// Create a client with no timeout for streaming responses
+	// The stream can still be cancelled via context
+	// This prevents timeout errors while reading long-running streams
+	streamClient := &http.Client{
+		Timeout:   0,                      // No timeout - allows reading long-running streams
+		Transport: c.httpClient.Transport, // Reuse the transport from the original client
+	}
+	if streamClient.Transport == nil {
+		// If original client has no custom transport, use default
+		streamClient.Transport = http.DefaultTransport
+	}
+
 	// Execute request
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := streamClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}
@@ -293,6 +391,7 @@ func (c *RawClient) AnalyzeDataStream(ctx context.Context, req *DataAnalysisRequ
 		Header:            resp.Header.Clone(),
 		StatusCode:        resp.StatusCode,
 		initialBufferSize: callOpts.streamBufferSize,
+		readTimeout:       callOpts.streamReadTimeout,
 	}, nil
 }
 

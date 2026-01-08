@@ -630,3 +630,456 @@ func TestWithStreamBufferSize_Option(t *testing.T) {
 	opts = newCallOptions()
 	require.Equal(t, 0, opts.streamBufferSize)
 }
+
+// ============ Stream Read Timeout Tests ============
+
+// slowReader is a reader that reads data slowly to simulate network delays
+type slowReader struct {
+	data      []byte
+	chunkSize int
+	delay     time.Duration
+	pos       int
+	closed    bool
+	firstRead bool // Whether this is the first read (skip delay for first read)
+}
+
+func newSlowReader(data []byte, chunkSize int, delay time.Duration) *slowReader {
+	return &slowReader{
+		data:      data,
+		chunkSize: chunkSize,
+		delay:     delay,
+		pos:       0,
+		closed:    false,
+		firstRead: true,
+	}
+}
+
+func (r *slowReader) Read(p []byte) (n int, err error) {
+	if r.closed {
+		return 0, io.EOF
+	}
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+
+	// Add delay to simulate slow network (skip delay for first read)
+	if r.delay > 0 && !r.firstRead {
+		time.Sleep(r.delay)
+	}
+	r.firstRead = false
+
+	// Read a chunk
+	chunkLen := r.chunkSize
+	if chunkLen > len(r.data)-r.pos {
+		chunkLen = len(r.data) - r.pos
+	}
+	if chunkLen > len(p) {
+		chunkLen = len(p)
+	}
+
+	copy(p, r.data[r.pos:r.pos+chunkLen])
+	r.pos += chunkLen
+	return chunkLen, nil
+}
+
+func (r *slowReader) Close() error {
+	r.closed = true
+	return nil
+}
+
+// blockingReader blocks on read until explicitly unblocked
+type blockingReader struct {
+	data   []byte
+	ch     chan struct{}
+	closed bool
+	pos    int
+}
+
+func newBlockingReader(data []byte) *blockingReader {
+	return &blockingReader{
+		data: data,
+		ch:   make(chan struct{}),
+		pos:  0,
+	}
+}
+
+func (r *blockingReader) Read(p []byte) (n int, err error) {
+	if r.closed {
+		return 0, io.EOF
+	}
+	// Block until unblocked
+	<-r.ch
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *blockingReader) Close() error {
+	r.closed = true
+	close(r.ch)
+	return nil
+}
+
+func (r *blockingReader) unblock() {
+	select {
+	case r.ch <- struct{}{}:
+	default:
+	}
+}
+
+func TestTimeoutReader_Read_Success(t *testing.T) {
+	t.Parallel()
+
+	// Create a reader with immediate data
+	data := []byte("test data")
+	reader := newTimeoutReader(io.NopCloser(strings.NewReader(string(data))), 100*time.Millisecond)
+
+	// Read should succeed immediately (no timeout)
+	buf := make([]byte, len(data))
+	n, err := reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+	require.Equal(t, data, buf[:n])
+
+	require.NoError(t, reader.Close())
+}
+
+func TestTimeoutReader_Read_WithSlowData(t *testing.T) {
+	t.Parallel()
+
+	// Create a slow reader that delays 50ms between chunks
+	data := []byte("test data chunk")
+	slowR := newSlowReader(data, 5, 50*time.Millisecond)
+	reader := newTimeoutReader(slowR, 200*time.Millisecond) // 200ms timeout
+
+	// Read should succeed (50ms delay < 200ms timeout)
+	buf := make([]byte, len(data))
+	start := time.Now()
+	n, err := reader.Read(buf)
+	duration := time.Since(start)
+
+	require.NoError(t, err)
+	require.Greater(t, n, 0)
+	require.Less(t, duration, 200*time.Millisecond, "Read should complete before timeout")
+	require.Equal(t, data[:n], buf[:n])
+
+	require.NoError(t, reader.Close())
+}
+
+func TestTimeoutReader_Read_Timeout(t *testing.T) {
+	t.Parallel()
+
+	// Create a blocking reader that blocks on read
+	blockingR := newBlockingReader([]byte("test"))
+	reader := newTimeoutReader(blockingR, 100*time.Millisecond) // 100ms timeout
+
+	// Read should timeout after 100ms
+	buf := make([]byte, 100)
+	start := time.Now()
+	n, err := reader.Read(buf)
+	duration := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read timeout")
+	require.Contains(t, err.Error(), "100ms")
+	require.Equal(t, 0, n)
+	require.GreaterOrEqual(t, duration, 90*time.Millisecond, "Should timeout after approximately 100ms")
+	require.Less(t, duration, 200*time.Millisecond, "Should timeout before 200ms")
+
+	require.NoError(t, reader.Close())
+}
+
+func TestTimeoutReader_Read_TimeoutResetOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	// Create a reader with multiple chunks, delayed between chunks
+	data := []byte("chunk1\nchunk2\nchunk3")
+	// First chunk reads immediately, then 50ms delay, then next chunk
+	slowR := newSlowReader(data, 7, 50*time.Millisecond)
+	reader := newTimeoutReader(slowR, 150*time.Millisecond) // 150ms timeout
+
+	// Read first chunk - should succeed (immediate, no delay on first read)
+	buf1 := make([]byte, 7)
+	start1 := time.Now()
+	n1, err1 := reader.Read(buf1)
+	duration1 := time.Since(start1)
+	require.NoError(t, err1)
+	require.Greater(t, n1, 0)
+	// First read should be fast (no delay)
+	require.Less(t, duration1, 50*time.Millisecond, "First read should be fast")
+
+	// Read second chunk - should succeed (50ms delay < 150ms timeout)
+	// This tests that timeout is reset after first successful read
+	buf2 := make([]byte, 7)
+	start2 := time.Now()
+	n2, err2 := reader.Read(buf2)
+	duration2 := time.Since(start2)
+	require.NoError(t, err2)
+	require.Greater(t, n2, 0)
+	require.GreaterOrEqual(t, duration2, 40*time.Millisecond, "Second read should include delay")
+	require.Less(t, duration2, 100*time.Millisecond, "Should complete before timeout")
+
+	// Read third chunk - should also succeed
+	buf3 := make([]byte, 7)
+	n3, err3 := reader.Read(buf3)
+	require.NoError(t, err3)
+	require.Greater(t, n3, 0)
+
+	require.NoError(t, reader.Close())
+}
+
+func TestTimeoutReader_Read_MillisecondTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Test with millisecond-level timeout
+	blockingR := newBlockingReader([]byte("test"))
+	reader := newTimeoutReader(blockingR, 50*time.Millisecond) // 50ms timeout
+
+	buf := make([]byte, 100)
+	start := time.Now()
+	n, err := reader.Read(buf)
+	duration := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read timeout")
+	require.Contains(t, err.Error(), "50ms")
+	require.Equal(t, 0, n)
+	// Should timeout after approximately 50ms (allow some margin)
+	require.GreaterOrEqual(t, duration, 40*time.Millisecond, "Should timeout after approximately 50ms")
+	require.Less(t, duration, 100*time.Millisecond, "Should timeout before 100ms")
+
+	require.NoError(t, reader.Close())
+}
+
+func TestTimeoutReader_Read_NoTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Test with no timeout (timeout = 0)
+	data := []byte("test data")
+	reader := newTimeoutReader(io.NopCloser(strings.NewReader(string(data))), 0)
+
+	// Read should work normally without timeout
+	buf := make([]byte, len(data))
+	n, err := reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+
+	require.NoError(t, reader.Close())
+}
+
+func TestDataAnalysisStream_ReadEvent_WithTimeout_Success(t *testing.T) {
+	t.Parallel()
+
+	// Create SSE stream with data that arrives quickly
+	sseData := "event: test\ndata: {\"key\":\"value\"}\n\n"
+	stream := &DataAnalysisStream{
+		Body:          io.NopCloser(strings.NewReader(sseData)),
+		Header:        make(http.Header),
+		StatusCode:    200,
+		initialBufferSize: 0,
+		readTimeout:   100 * time.Millisecond, // 100ms timeout
+	}
+
+	// Read should succeed immediately
+	start := time.Now()
+	event, err := stream.ReadEvent()
+	duration := time.Since(start)
+
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	require.Equal(t, "test", event.Type)
+	require.Less(t, duration, 50*time.Millisecond, "Should read quickly")
+
+	require.NoError(t, stream.Close())
+}
+
+func TestDataAnalysisStream_ReadEvent_WithTimeout_Timeout(t *testing.T) {
+	t.Parallel()
+
+	// Create a blocking reader
+	blockingR := newBlockingReader([]byte("event: test\ndata: {\"key\":\"value\"}\n\n"))
+	stream := &DataAnalysisStream{
+		Body:          blockingR,
+		Header:        make(http.Header),
+		StatusCode:    200,
+		initialBufferSize: 0,
+		readTimeout:   100 * time.Millisecond, // 100ms timeout
+	}
+
+	// Read should timeout
+	start := time.Now()
+	event, err := stream.ReadEvent()
+	duration := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read timeout")
+	require.Nil(t, event)
+	require.GreaterOrEqual(t, duration, 90*time.Millisecond, "Should timeout after approximately 100ms")
+	require.Less(t, duration, 200*time.Millisecond, "Should timeout before 200ms")
+
+	require.NoError(t, stream.Close())
+}
+
+func TestDataAnalysisStream_ReadEvent_WithTimeout_ResetOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	// Create SSE stream with multiple events, with delay between events
+	// First event arrives quickly, second after delay
+	sseData := "event: first\ndata: {\"key1\":\"value1\"}\n\n" +
+		"event: second\ndata: {\"key2\":\"value2\"}\n\n"
+
+	// Create a slow reader that delays between chunks
+	slowR := newSlowReader([]byte(sseData), 20, 50*time.Millisecond)
+	stream := &DataAnalysisStream{
+		Body:          slowR,
+		Header:        make(http.Header),
+		StatusCode:    200,
+		initialBufferSize: 0,
+		readTimeout:   150 * time.Millisecond, // 150ms timeout
+	}
+
+	// Read first event - should succeed
+	event1, err1 := stream.ReadEvent()
+	require.NoError(t, err1)
+	require.NotNil(t, event1)
+	require.Equal(t, "first", event1.Type)
+
+	// Read second event - should succeed (timeout was reset after first read)
+	// This tests that timeout is reset on each successful read
+	start := time.Now()
+	event2, err2 := stream.ReadEvent()
+	duration := time.Since(start)
+
+	require.NoError(t, err2)
+	require.NotNil(t, event2)
+	require.Equal(t, "second", event2.Type)
+	// Second read should take some time due to delay, but complete before timeout
+	require.GreaterOrEqual(t, duration, 40*time.Millisecond, "Should include delay")
+	require.Less(t, duration, 120*time.Millisecond, "Should complete before timeout")
+
+	require.NoError(t, stream.Close())
+}
+
+func TestDataAnalysisStream_ReadEvent_WithMillisecondTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Test with millisecond-level timeout using a blocking reader
+	blockingR := newBlockingReader([]byte("event: test\ndata: {\"key\":\"value\"}\n\n"))
+	stream := &DataAnalysisStream{
+		Body:          blockingR,
+		Header:        make(http.Header),
+		StatusCode:    200,
+		initialBufferSize: 0,
+		readTimeout:   50 * time.Millisecond, // 50ms timeout
+	}
+
+	start := time.Now()
+	event, err := stream.ReadEvent()
+	duration := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read timeout")
+	require.Contains(t, err.Error(), "50ms")
+	require.Nil(t, event)
+	require.GreaterOrEqual(t, duration, 40*time.Millisecond, "Should timeout after approximately 50ms")
+	require.Less(t, duration, 100*time.Millisecond, "Should timeout before 100ms")
+
+	require.NoError(t, stream.Close())
+}
+
+func TestWithStreamReadTimeout_Option(t *testing.T) {
+	t.Parallel()
+
+	// Test that WithStreamReadTimeout properly sets the timeout in callOptions
+	opts := newCallOptions(WithStreamReadTimeout(60 * time.Second))
+	require.Equal(t, 60*time.Second, opts.streamReadTimeout)
+
+	// Test with millisecond timeout
+	opts = newCallOptions(WithStreamReadTimeout(500 * time.Millisecond))
+	require.Equal(t, 500*time.Millisecond, opts.streamReadTimeout)
+
+	// Test with zero value (should use default)
+	opts = newCallOptions(WithStreamReadTimeout(0))
+	require.Equal(t, defaultStreamReadTimeout, opts.streamReadTimeout)
+
+	// Test with negative value (should use default)
+	opts = newCallOptions(WithStreamReadTimeout(-1 * time.Second))
+	require.Equal(t, defaultStreamReadTimeout, opts.streamReadTimeout)
+
+	// Test default value
+	opts = newCallOptions()
+	require.Equal(t, defaultStreamReadTimeout, opts.streamReadTimeout)
+}
+
+func TestTimeoutReader_Close(t *testing.T) {
+	t.Parallel()
+
+	// Test that Close properly closes the underlying reader
+	// Use a reader that tracks closed state
+	data := []byte("test")
+	underlying := io.NopCloser(strings.NewReader(string(data)))
+	reader := newTimeoutReader(underlying, 100*time.Millisecond)
+
+	// Close should succeed
+	err := reader.Close()
+	require.NoError(t, err)
+
+	// Read after close - the underlying reader may still have data available
+	// but Close() was called, which is the important part to test
+	// We verify that Close() doesn't panic and works correctly
+	buf := make([]byte, 10)
+	n, err := reader.Read(buf)
+	// Some readers allow reading after close (like io.NopCloser),
+	// while others return EOF. Both behaviors are acceptable.
+	// The important thing is that Close() was called successfully.
+	if err != nil {
+		// If there's an error, it should be EOF
+		require.ErrorIs(t, err, io.EOF)
+	}
+	// Whether we read data or not depends on the underlying reader's behavior
+	// The test primarily verifies that Close() works without panic
+	_ = n // n may be 0 or the number of bytes read, both are acceptable
+}
+
+func TestDataAnalysisStream_ReadEvent_WithTimeout_MultipleReads(t *testing.T) {
+	t.Parallel()
+
+	// Test multiple reads with timeout - each successful read should reset the timeout
+	sseData := "event: event1\ndata: {\"key1\":\"value1\"}\n\n" +
+		"event: event2\ndata: {\"key2\":\"value2\"}\n\n" +
+		"event: event3\ndata: {\"key3\":\"value3\"}\n\n"
+
+	// Create a slow reader with 30ms delay between chunks
+	slowR := newSlowReader([]byte(sseData), 30, 30*time.Millisecond)
+	stream := &DataAnalysisStream{
+		Body:          slowR,
+		Header:        make(http.Header),
+		StatusCode:    200,
+		initialBufferSize: 0,
+		readTimeout:   100 * time.Millisecond, // 100ms timeout
+	}
+
+	// Read all three events - each should succeed (timeout resets on each read)
+	events := []string{"event1", "event2", "event3"}
+	for i, expectedType := range events {
+		start := time.Now()
+		event, err := stream.ReadEvent()
+		duration := time.Since(start)
+
+		require.NoError(t, err, "Event %d should succeed", i+1)
+		require.NotNil(t, event, "Event %d should not be nil", i+1)
+		require.Equal(t, expectedType, event.Type, "Event %d should have correct type", i+1)
+		// Each read should complete before timeout (allowing for delay)
+		require.Less(t, duration, 90*time.Millisecond, "Event %d should complete before timeout", i+1)
+	}
+
+	// Next read should return EOF
+	event, err := stream.ReadEvent()
+	require.ErrorIs(t, err, io.EOF)
+	require.Nil(t, event)
+
+	require.NoError(t, stream.Close())
+}

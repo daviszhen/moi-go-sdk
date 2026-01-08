@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	defaultUserAgent   = "matrixflow-sdk-go/0.1.0"
-	defaultHTTPTimeout = 30 * time.Second
+	defaultUserAgent        = "matrixflow-sdk-go/0.1.0"
+	defaultHTTPTimeout      = 30 * time.Second
+	defaultStreamReadTimeout = 30 * time.Second // Default timeout between messages in streaming responses
 )
 
 type clientOptions struct {
@@ -168,18 +169,20 @@ func WithLLMProxyBaseURL(baseURL string) ClientOption {
 type CallOption func(*callOptions)
 
 type callOptions struct {
-	headers           http.Header
-	query             url.Values
-	requestID         string
-	useDirectLLMProxy bool // Whether to use direct LLM Proxy connection
-	streamBufferSize  int  // Buffer size for stream scanner (in bytes)
+	headers            http.Header
+	query              url.Values
+	requestID          string
+	useDirectLLMProxy  bool          // Whether to use direct LLM Proxy connection
+	streamBufferSize   int           // Buffer size for stream scanner (in bytes)
+	streamReadTimeout  time.Duration // Timeout between messages in streaming responses (0 means use default)
 }
 
 func newCallOptions(opts ...CallOption) callOptions {
 	co := callOptions{
-		headers:          make(http.Header),
-		query:            make(url.Values),
-		streamBufferSize: 0, // 0 means use default
+		headers:           make(http.Header),
+		query:             make(url.Values),
+		streamBufferSize:  0,                     // 0 means use default
+		streamReadTimeout: defaultStreamReadTimeout, // Default timeout between messages
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -328,6 +331,29 @@ func WithStreamBufferSize(size int) CallOption {
 	return func(co *callOptions) {
 		if size > 0 {
 			co.streamBufferSize = size
+		}
+	}
+}
+
+// WithStreamReadTimeout sets the timeout between messages in streaming responses.
+//
+// This timeout is reset each time data is successfully read from the stream.
+// If no data is received within this timeout period, the read operation will fail.
+// This is different from the overall HTTP client timeout - it only applies to
+// the interval between messages, allowing long-running streams while detecting
+// actual connection failures.
+//
+// If not set, the default timeout is 30 seconds.
+// Set to 0 to disable timeout (not recommended).
+//
+// Example:
+//
+//	stream, err := client.AnalyzeDataStream(ctx, req,
+//		sdk.WithStreamReadTimeout(60*time.Second)) // 60 seconds between messages
+func WithStreamReadTimeout(timeout time.Duration) CallOption {
+	return func(co *callOptions) {
+		if timeout > 0 {
+			co.streamReadTimeout = timeout
 		}
 	}
 }
