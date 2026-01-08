@@ -754,7 +754,7 @@ func (c *SDKClient) CreateDocumentProcessingWorkflow(ctx context.Context, workfl
 				},
 				{
 					ID:             "EmbedNode_5",
-					Type:           "EmbeddingNodeV2",
+					Type:           "EmbedNode",
 					InitParameters: map[string]map[string]interface{}{},
 				},
 				{
