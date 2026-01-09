@@ -619,7 +619,7 @@ More content here for testing purposes.
 	defer waitCancel()
 
 	t.Logf("Waiting for workflow job (workflow_id=%s, source_file_id=%s)...", workflowID, uploadResp.FileID)
-	job, err := client.WaitForWorkflowJob(waitCtx, workflowID, uploadResp.FileID, 2*time.Second)
+	job, err := client.WaitForWorkflowJob(waitCtx, workflowID, uploadResp.FileID, 2*time.Second, nil)
 	if err != nil {
 		// If job not found, try to list all jobs for debugging
 		t.Logf("[DEBUG] Job not found after polling. Checking all jobs for workflow %s...", workflowID)

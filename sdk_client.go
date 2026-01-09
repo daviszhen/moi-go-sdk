@@ -848,11 +848,12 @@ func (c *SDKClient) GetWorkflowJob(ctx context.Context, workflowID string, sourc
 	return &resp.Jobs[0], nil
 }
 
-// WaitForWorkflowJob polls for a workflow job until it is found or the context times out.
+// WaitForWorkflowJob polls for a workflow job until it reaches one of the specified statuses or the context times out.
 //
 // This method continuously queries for a workflow job matching the given workflow ID and source file ID
 // until either:
-//   - The job is found (returns the job immediately)
+//   - The job is found and its status matches one of the waitForStatuses (returns the job immediately)
+//   - If waitForStatuses is nil or empty, the job is found (returns the job immediately)
 //   - The context is cancelled or times out (returns an error)
 //
 // The polling interval and timeout are controlled by the provided context. If the context has a deadline,
@@ -863,22 +864,24 @@ func (c *SDKClient) GetWorkflowJob(ctx context.Context, workflowID string, sourc
 //   - workflowID: the workflow ID (required)
 //   - sourceFileID: the source file ID (required)
 //   - pollInterval: the interval between polling attempts (default: 2 seconds if <= 0)
+//   - waitForStatuses: list of statuses to wait for. If nil or empty, returns the job as soon as it's found.
 //
 // Returns:
-//   - *WorkflowJob: the matching workflow job
+//   - *WorkflowJob: the matching workflow job with one of the specified statuses
 //   - error: any error that occurred, including context timeout or job not found
 //
 // Example:
 //
-//	// With explicit timeout
+//	// Wait for job to complete or fail
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 //	defer cancel()
-//	job, err := sdkClient.WaitForWorkflowJob(ctx, "workflow-123", "file-456", 2*time.Second)
+//	job, err := sdkClient.WaitForWorkflowJob(ctx, "workflow-123", "file-456", 2*time.Second,
+//		[]WorkflowJobStatus{WorkflowJobStatusCompleted, WorkflowJobStatusFailed})
 //	if err != nil {
 //		return err
 //	}
-//	fmt.Printf("Job found: %s, Status: %d\n", job.JobID, job.Status)
-func (c *SDKClient) WaitForWorkflowJob(ctx context.Context, workflowID string, sourceFileID string, pollInterval time.Duration) (*WorkflowJob, error) {
+//	fmt.Printf("Job found: %s, Status: %s\n", job.JobID, job.Status)
+func (c *SDKClient) WaitForWorkflowJob(ctx context.Context, workflowID string, sourceFileID string, pollInterval time.Duration, waitForStatuses []WorkflowJobStatus) (*WorkflowJob, error) {
 	if strings.TrimSpace(workflowID) == "" {
 		return nil, fmt.Errorf("workflow_id is required")
 	}
@@ -899,32 +902,53 @@ func (c *SDKClient) WaitForWorkflowJob(ctx context.Context, workflowID string, s
 		defer cancel()
 	}
 
+	// Helper function to check if status is in the wait list
+	statusMatches := func(status WorkflowJobStatus) bool {
+		if len(waitForStatuses) == 0 {
+			return true // If no statuses specified, accept any status
+		}
+		for _, waitStatus := range waitForStatuses {
+			if status == waitStatus {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Poll for the job
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	// Try once immediately
 	job, err := c.GetWorkflowJob(ctxWithDeadline, workflowID, sourceFileID)
-	if err == nil && job != nil {
+	if err == nil && job != nil && statusMatches(job.Status) {
 		return job, nil
 	}
 
-	// Poll until found or context expires
+	// Poll until found with matching status or context expires
 	for {
 		select {
 		case <-ctxWithDeadline.Done():
 			// Context expired or cancelled
 			if ctxWithDeadline.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("workflow job not found within timeout for workflow_id=%s, source_file_id=%s: %w", workflowID, sourceFileID, ctxWithDeadline.Err())
+				statusDesc := "any status"
+				if len(waitForStatuses) > 0 {
+					statusStrs := make([]string, len(waitForStatuses))
+					for i, s := range waitForStatuses {
+						statusStrs[i] = s.String()
+					}
+					statusDesc = strings.Join(statusStrs, ", ")
+				}
+				return nil, fmt.Errorf("workflow job did not reach status [%s] within timeout for workflow_id=%s, source_file_id=%s: %w", statusDesc, workflowID, sourceFileID, ctxWithDeadline.Err())
 			}
 			return nil, fmt.Errorf("context cancelled while waiting for workflow job: %w", ctxWithDeadline.Err())
 		case <-ticker.C:
 			// Poll again
 			job, err := c.GetWorkflowJob(ctxWithDeadline, workflowID, sourceFileID)
-			if err == nil && job != nil {
+			if err == nil && job != nil && statusMatches(job.Status) {
 				return job, nil
 			}
-			// Continue polling on error (job not found yet)
+			// Continue polling on error or if status doesn't match
 		}
 	}
 }
